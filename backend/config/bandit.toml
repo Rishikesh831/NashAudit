@@ -1,0 +1,16 @@
+# Thompson Sampling Bandit Configuration
+
+[bandit]
+initial_alpha = 1.0    # Beta distribution prior — no knowledge
+initial_beta  = 1.0    # Beta distribution prior — no knowledge
+
+[arms]
+# Each arm = one audit strategy variant
+# Name = strategy, spec = which feature it prioritises
+names = [
+  "high_risk_score",
+  "high_velocity",
+  "coalition_keystone",
+  "high_amount_anomaly",
+  "balanced"
+]

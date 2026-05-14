@@ -1,0 +1,27 @@
+# NashAudit — Simulation Defaults
+# Edit these to change what the Setup page loads with
+
+[batch]
+N                  = 500
+k                  = 100
+time_window_hours  = 24
+data_mode          = "synthetic"   # "synthetic" or "csv"
+
+[fraudster_mix]
+risk_neutral = 0.30
+risk_averse  = 0.25
+risk_seeking = 0.20
+colluding    = 0.25
+# Must sum to 1.0 — validated on load
+
+[game_params]
+G         = 10000    # Fraud gain (₹)
+P_caught  = 50000    # Penalty if identified (₹)
+P_escaped = 5000     # Penalty if flagged but anonymous (₹)
+alpha     = 0.65     # Capture probability given audit
+
+[deterrence]
+lambda_risk_averse  = 0.3   # Variance penalty weight for risk-averse type
+lambda_risk_seeking = 0.3   # Variance reward weight for risk-seeking type
+beta_synergy        = 0.7   # Coalition subadditivity parameter
+partial_regime_threshold = 0.5  # q < 0.5*q* → no deterrence

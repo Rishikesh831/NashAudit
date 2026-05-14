@@ -1,0 +1,18 @@
+# Heuristic weights for Layer 1 and Layer 2 computations
+# These are fixed (not learned). Change here to recalibrate.
+
+[layer1.risk_scorer]
+# ρ = σ(w1·z_amount + w2·velocity + w3·device + w4·geo + w5·time)
+w1_amount_zscore   = 0.40
+w2_velocity        = 0.25
+w3_device_mismatch = 0.20
+w4_geo_anomaly     = 0.10
+w5_time_anomaly    = 0.05
+
+[layer2.alpha_estimator]
+# α = σ(v1·ρ + v2·trail_depth + v3·links + v4·device_evidence + v5·flags)
+v1_risk_score      = 0.30
+v2_trail_depth     = 0.25
+v3_cross_links     = 0.20
+v4_device_evidence = 0.15
+v5_prior_flags     = 0.10

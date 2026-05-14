@@ -1,0 +1,48 @@
+# NashAudit — Council Agent Definitions
+# Each agent has: identity, lens description, specialisation vector
+# Specialisation vector dims: [amount_anomaly, velocity, graph, device_geo, history]
+
+[agents.risk_analyst]
+id          = "risk_analyst"
+name        = "Risk Analyst"
+icon        = "📊"
+color       = "#1D9E75"
+lens        = "Quantitative expected value reasoning using E[cheat] formula"
+spec_vec    = [1.0, 0.5, 0.0, 0.2, 0.0]
+default_position = "AUDIT"
+
+[agents.forensics_agent]
+id          = "forensics_agent"
+name        = "Forensics Agent"
+icon        = "🔬"
+color       = "#0C447C"
+lens        = "Evidence depth and capture probability α estimation"
+spec_vec    = [0.3, 0.2, 1.0, 0.8, 0.5]
+default_position = "AUDIT"
+
+[agents.coalition_detector]
+id          = "coalition_detector"
+name        = "Coalition Detector"
+icon        = "🕸️"
+color       = "#7F77DD"
+lens        = "Graph structure, cross-account links, Shapley values"
+spec_vec    = [0.0, 0.1, 1.0, 0.3, 0.8]
+default_position = "AUDIT"
+
+[agents.behavioural_agent]
+id          = "behavioural_agent"
+name        = "Behavioural Agent"
+icon        = "🧠"
+color       = "#BA7517"
+lens        = "Variance-adjusted utility, irrational fraudster modelling"
+spec_vec    = [0.5, 0.8, 0.2, 0.0, 0.3]
+default_position = "UNCERTAIN"
+
+[agents.adversarial_agent]
+id          = "adversarial_agent"
+name        = "Adversarial Agent"
+icon        = "⚖️"
+color       = "#D85A30"
+lens        = "Red-team defence — argue against audit, find false positive risk"
+spec_vec    = [0.8, 0.4, 0.3, 0.5, 0.5]
+default_position = "SKIP"
