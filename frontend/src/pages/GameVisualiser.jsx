@@ -1,16 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { useSim } from '../store/SimContext';
-import {
-  FRAUDSTER_TYPES, computeBestResponseCurves, computeECheat,
-  computeTypeKPIs, computeQStar, runSimulationRound,
-} from '../engine/simulation';
+import { useSim, FRAUDSTER_TYPES } from '../store/SimContext';
+import { getGameState } from '../api/api';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, ReferenceLine, Area, AreaChart, ScatterChart,
   Scatter, Cell, PieChart, Pie,
 } from 'recharts';
-import { Play, Pause, SkipForward, RotateCcw } from 'lucide-react';
+import { Play, Pause, SkipForward, RotateCcw, Loader2 } from 'lucide-react';
 
 const fadeUp = {
   hidden: { opacity: 0, y: 16 },
@@ -35,23 +32,45 @@ function CustomTooltip({ active, payload, label }) {
 }
 
 export default function GameVisualiser() {
-  const { state, dispatch, stopSimulation } = useSim();
-  const { params, transactions, roundHistory, agentPriors, isRunning, currentRound, speed } = state;
+  const { state, dispatch, runOneRound: apiRunOneRound, startSimulation, stopSimulation } = useSim();
+  const { params, roundHistory, isRunning, currentRound, speed, simulationId, loading } = state;
   const timerRef = useRef(null);
   const [localSpeed, setLocalSpeed] = useState(speed);
+  const [gameData, setGameData] = useState(null);
 
   const p = params;
   const q = p.k / p.N;
-  const hasData = transactions.length > 0;
+  const hasData = !!simulationId;
   const latestRound = roundHistory.length > 0 ? roundHistory[roundHistory.length - 1] : null;
+  const latestBelief = latestRound ? (latestRound.fraudster_belief ?? latestRound.fraudsterBelief ?? 0) : 0;
+  const latestGap = latestRound ? (latestRound.credibility_gap ?? latestRound.credibilityGap ?? Math.abs(q - latestBelief)) : 0;
 
-  // Best response curves
-  const brData = hasData ? computeBestResponseCurves(p.G, p.alpha, p.P_caught, p.P_escaped) : [];
+  // Fetch game state from backend when rounds change
+  useEffect(() => {
+    if (!simulationId) return;
+    getGameState(simulationId).then(setGameData).catch(() => {});
+  }, [simulationId, currentRound]);
 
-  // Current type KPIs
-  const typeKPIs = FRAUDSTER_TYPES.map(type =>
-    computeTypeKPIs(type, q, p.G, p.alpha, p.P_caught, p.P_escaped)
-  );
+  // Best response curves from backend
+  const brData = gameData?.best_response_curves || [];
+
+  // Type KPIs from backend or game state
+  const backendTypeKPIs = gameData?.type_kpis;
+  const typeKPIs = backendTypeKPIs
+    ? Object.entries(backendTypeKPIs).map(([tid, kpi]) => ({
+        ...kpi,
+        qStar: kpi.q_star,
+        eCheat: kpi.e_cheat,
+      }))
+    : FRAUDSTER_TYPES.map(type => {
+        const effectiveGain = p.G * type.utilityMultiplier;
+        const denom = p.alpha * p.P_caught + (1 - p.alpha) * p.P_escaped;
+        const qStar = denom > 0 ? Math.min(1, effectiveGain / denom) : 1;
+        const eCheat = (1 - q) * effectiveGain - q * denom;
+        const margin = effectiveGain > 0 ? eCheat / effectiveGain : 0;
+        const regime = q >= qStar ? 'full' : q >= qStar * 0.7 ? 'partial' : 'none';
+        return { type_id: type.id, type_name: type.name, qStar, eCheat, margin, regime };
+      });
 
   // Deterrence distribution for donut
   const regimeCounts = typeKPIs.reduce((acc, kpi) => {
@@ -64,43 +83,43 @@ export default function GameVisualiser() {
     { name: 'None', value: regimeCounts.none || 0, fill: '#D94F3D' },
   ].filter(d => d.value > 0);
 
-  // Belief convergence data
-  const beliefData = roundHistory.map(r => ({
-    round: r.roundNum,
-    committed: q,
-    belief: r.fraudsterBelief,
-    gap: Math.abs(q - r.fraudsterBelief),
-  }));
+  // Belief convergence from backend game state or round history
+  const beliefData = gameData?.belief_convergence?.length > 0
+    ? gameData.belief_convergence
+    : roundHistory.map(r => ({
+        round: r.round_number || r.roundNum,
+        committed: q,
+        belief: r.fraudster_belief ?? r.fraudsterBelief ?? 0,
+        gap: Math.abs(q - (r.fraudster_belief ?? r.fraudsterBelief ?? 0)),
+      }));
 
-  // Heatmap data (simplified as scatter)
+  // Heatmap data (computed locally — pure math)
   const heatmapData = [];
   for (let qi = 0; qi <= 20; qi++) {
     for (let gi = 1; gi <= 20; gi++) {
       const qVal = qi / 20;
       const gVal = gi * 5000;
-      const eCheat = computeECheat(qVal, gVal, p.alpha, p.P_caught, p.P_escaped, 1.0);
+      const denom = p.alpha * p.P_caught + (1 - p.alpha) * p.P_escaped;
+      const eCheat = (1 - qVal) * gVal - qVal * denom;
       heatmapData.push({ q: qVal, G: gVal, eCheat, color: eCheat > 0 ? '#D94F3D' : '#1D9E75' });
     }
   }
 
-  // Run simulation
-  const runOneRound = useCallback(() => {
-    if (!hasData) return;
-    const result = runSimulationRound({
-      transactions,
-      params: p,
-      roundHistory: state.roundHistory,
-      agentPriors: state.agentPriors,
-    });
-    dispatch({ type: 'ADD_ROUND', roundData: result.roundData, newPriors: result.newPriors });
-  }, [hasData, transactions, p, state.roundHistory, state.agentPriors, dispatch]);
+  // Run one round via backend API
+  const runOneRound = useCallback(async () => {
+    if (!hasData || loading) return;
+    try {
+      await apiRunOneRound();
+    } catch {}
+  }, [hasData, loading, apiRunOneRound]);
 
   // Auto-run
   useEffect(() => {
     if (isRunning && hasData) {
+      const interval = Math.max(500, 2000 / localSpeed);
       timerRef.current = setInterval(() => {
         runOneRound();
-      }, 1000 / localSpeed);
+      }, interval);
     }
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
@@ -110,15 +129,24 @@ export default function GameVisualiser() {
   // Stop after 30 rounds
   useEffect(() => {
     if (currentRound >= 30 && isRunning) {
-      dispatch({ type: 'SET_RUNNING', value: false });
+      stopSimulation();
     }
-  }, [currentRound, isRunning, dispatch]);
+  }, [currentRound, isRunning, stopSimulation]);
 
   if (!hasData) {
     return (
       <div className="page-container" style={{ textAlign: 'center', paddingTop: 120 }}>
         <h2 style={{ color: 'var(--text-tertiary)', marginBottom: 8 }}>No Simulation Data</h2>
         <p style={{ color: 'var(--text-secondary)' }}>Go to Setup and configure your parameters first.</p>
+      </div>
+    );
+  }
+
+  if (state.error) {
+    return (
+      <div className="page-container" style={{ textAlign: 'center', paddingTop: 120 }}>
+        <h2 style={{ color: 'var(--positive-red)', marginBottom: 8 }}>Error</h2>
+        <p style={{ color: 'var(--text-secondary)' }}>{state.error}</p>
       </div>
     );
   }
@@ -134,13 +162,15 @@ export default function GameVisualiser() {
       {/* Controls */}
       <motion.div initial="hidden" animate="visible" custom={1} variants={fadeUp}
         style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
-        <button className="btn btn-primary" onClick={() => dispatch({ type: 'SET_RUNNING', value: !isRunning })}>
+        <button className="btn btn-primary" onClick={() => {
+          if (isRunning) stopSimulation(); else dispatch({ type: 'SET_RUNNING', value: true });
+        }}>
           {isRunning ? <><Pause size={14} /> Pause</> : <><Play size={14} /> {currentRound === 0 ? 'Start' : 'Resume'}</>}
         </button>
-        <button className="btn btn-secondary" onClick={runOneRound} disabled={isRunning}>
-          <SkipForward size={14} /> Step
+        <button className="btn btn-secondary" onClick={runOneRound} disabled={isRunning || loading}>
+          {loading ? <Loader2 size={14} className="animate-spin" /> : <SkipForward size={14} />} Step
         </button>
-        <button className="btn btn-secondary" onClick={() => dispatch({ type: 'INIT_SIMULATION' })}>
+        <button className="btn btn-secondary" onClick={() => dispatch({ type: 'RESET' })}>
           <RotateCcw size={14} /> Reset
         </button>
         <div className="speed-control" style={{ marginLeft: 'auto' }}>
@@ -264,8 +294,8 @@ export default function GameVisualiser() {
                 </AreaChart>
               </ResponsiveContainer>
               <div className="plain-english">
-                Fraudsters currently believe you audit {latestRound ? (latestRound.fraudsterBelief * 100).toFixed(1) : '—'}%.
-                Credibility gap = {latestRound ? (latestRound.credibilityGap * 100).toFixed(1) : '—'}%.
+                Fraudsters currently believe you audit {latestRound ? (latestBelief * 100).toFixed(1) : '—'}%.
+                Credibility gap = {latestRound ? (latestGap * 100).toFixed(1) : '—'}%.
               </div>
             </motion.div>
           )}
@@ -291,7 +321,10 @@ export default function GameVisualiser() {
               </thead>
               <tbody>
                 {typeKPIs.map((kpi, i) => {
-                  const type = FRAUDSTER_TYPES[i];
+                  const type = FRAUDSTER_TYPES.find(t => t.id === kpi.type_id) || FRAUDSTER_TYPES[i] || { id: kpi.type_id, name: kpi.type_name || kpi.type_id, color: '#888' };
+                  const qS = kpi.qStar ?? kpi.q_star ?? 0;
+                  const eC = kpi.eCheat ?? kpi.e_cheat ?? 0;
+                  const margin = kpi.margin ?? 0;
                   return (
                     <tr key={type.id}>
                       <td>
@@ -302,21 +335,21 @@ export default function GameVisualiser() {
                       </td>
                       <td>
                         <span className="mono" style={{ fontSize: 12 }}>
-                          {(kpi.qStar * 100).toFixed(1)}%
+                          {(qS * 100).toFixed(1)}%
                         </span>
                       </td>
                       <td>
-                        <span className={`mono ${kpi.eCheat > 0 ? 'positive' : 'negative'}`}
-                          style={{ fontSize: 12, fontWeight: 500, color: kpi.eCheat > 0 ? 'var(--positive-red)' : 'var(--negative-green)' }}>
-                          {kpi.eCheat > 0 ? '+' : ''}₹{Math.abs(Math.round(kpi.eCheat)).toLocaleString()}
+                        <span className={`mono ${eC > 0 ? 'positive' : 'negative'}`}
+                          style={{ fontSize: 12, fontWeight: 500, color: eC > 0 ? 'var(--positive-red)' : 'var(--negative-green)' }}>
+                          {eC > 0 ? '+' : ''}₹{Math.abs(Math.round(eC)).toLocaleString()}
                         </span>
                       </td>
                       <td>
                         <span className="mono" style={{
                           fontSize: 12,
-                          color: kpi.margin > 0 ? 'var(--positive-red)' : kpi.margin > -0.1 ? 'var(--secondary-amber)' : 'var(--negative-green)',
+                          color: margin > 0 ? 'var(--positive-red)' : margin > -0.1 ? 'var(--secondary-amber)' : 'var(--negative-green)',
                         }}>
-                          {kpi.margin > 0 ? '+' : ''}{kpi.margin.toFixed(3)}
+                          {margin > 0 ? '+' : ''}{margin.toFixed(3)}
                         </span>
                       </td>
                       <td>
@@ -333,30 +366,30 @@ export default function GameVisualiser() {
             {/* Round summary */}
             {latestRound && (
               <div style={{ marginTop: 20, padding: '12px 0', borderTop: '1px solid var(--border-secondary)' }}>
-                <div className="section-label" style={{ marginBottom: 8 }}>Round {latestRound.roundNum} Summary</div>
+                <div className="section-label" style={{ marginBottom: 8 }}>Round {latestRound.round_number ?? latestRound.roundNum} Summary</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   <div>
                     <div className="kpi-label">Fraud Attempts</div>
-                    <div className="mono" style={{ fontSize: 18, color: latestRound.fraudAttempts > 0 ? 'var(--positive-red)' : 'var(--negative-green)' }}>
-                      {latestRound.fraudAttempts}
+                    <div className="mono" style={{ fontSize: 18, color: (latestRound.fraud_attempts ?? latestRound.fraudAttempts) > 0 ? 'var(--positive-red)' : 'var(--negative-green)' }}>
+                      {latestRound.fraud_attempts ?? latestRound.fraudAttempts}
                     </div>
                   </div>
                   <div>
                     <div className="kpi-label">Caught</div>
                     <div className="mono" style={{ fontSize: 18, color: 'var(--accent-teal)' }}>
-                      {latestRound.fraudCaught}
+                      {latestRound.fraud_caught ?? latestRound.fraudCaught}
                     </div>
                   </div>
                   <div>
                     <div className="kpi-label">DER</div>
-                    <div className="mono" style={{ fontSize: 18, color: latestRound.DER > 0.7 ? 'var(--accent-teal)' : 'var(--secondary-amber)' }}>
-                      {(latestRound.DER * 100).toFixed(0)}%
+                    <div className="mono" style={{ fontSize: 18, color: (latestRound.DER) > 0.7 ? 'var(--accent-teal)' : 'var(--secondary-amber)' }}>
+                      {((latestRound.DER) * 100).toFixed(0)}%
                     </div>
                   </div>
                   <div>
                     <div className="kpi-label">IC Status</div>
-                    <span className={`status-badge ${latestRound.icSatisfied ? 'deterred' : 'active'}`}>
-                      {latestRound.icSatisfied ? 'PASS' : 'FAIL'}
+                    <span className={`status-badge ${(latestRound.ic_satisfied ?? latestRound.icSatisfied) ? 'deterred' : 'active'}`}>
+                      {(latestRound.ic_satisfied ?? latestRound.icSatisfied) ? 'PASS' : 'FAIL'}
                     </span>
                   </div>
                 </div>

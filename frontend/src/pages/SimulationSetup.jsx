@@ -1,8 +1,9 @@
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { useSim } from '../store/SimContext';
-import { FRAUDSTER_TYPES, computeQStar, computeECheat, computeSafetyMargin, getDeterrenceRegime } from '../engine/simulation';
-import { ArrowRight, Upload, Shuffle } from 'lucide-react';
+import { useSim, FRAUDSTER_TYPES } from '../store/SimContext';
+import { setupPreview } from '../api/api';
+import { ArrowRight, Upload, Shuffle, Loader2 } from 'lucide-react';
 
 const fadeUp = {
   hidden: { opacity: 0, y: 16 },
@@ -20,23 +21,58 @@ export default function SimulationSetup() {
   const navigate = useNavigate();
   const p = state.params;
   const q = p.k / p.N;
+  const [previewData, setPreviewData] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const debounceRef = useRef(null);
 
-  // Live computations
-  const typeKPIs = FRAUDSTER_TYPES.map(type => {
-    const qStar = computeQStar(p.G, p.alpha, p.P_caught, p.P_escaped, type.utilityMultiplier);
-    const eCheat = computeECheat(q, p.G, p.alpha, p.P_caught, p.P_escaped, type.utilityMultiplier);
-    const margin = computeSafetyMargin(eCheat, p.G * type.utilityMultiplier);
-    const regime = getDeterrenceRegime(q, qStar);
-    return { type, qStar, eCheat, margin, regime };
-  });
+  // Fetch preview from backend API (debounced)
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      setPreviewLoading(true);
+      try {
+        const data = await setupPreview(p);
+        setPreviewData(data);
+      } catch {
+        // Silently fail — preview is non-critical
+      } finally {
+        setPreviewLoading(false);
+      }
+    }, 300);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [p.N, p.k, p.G, p.alpha, p.P_caught, p.P_escaped, p.typeMix]);
+
+  // Map preview data to typeKPIs format (or use local fallback)
+  const typeKPIs = previewData?.type_kpis
+    ? previewData.type_kpis.map(kpi => ({
+        type: FRAUDSTER_TYPES.find(t => t.id === kpi.type_id) || { id: kpi.type_id, name: kpi.type_name, color: kpi.color || '#888' },
+        qStar: kpi.q_star,
+        eCheat: kpi.e_cheat,
+        margin: kpi.margin,
+        regime: kpi.regime,
+      }))
+    : FRAUDSTER_TYPES.map(type => {
+        // Fallback: local computation if backend unreachable
+        const effectiveGain = p.G * type.utilityMultiplier;
+        const denom = p.alpha * p.P_caught + (1 - p.alpha) * p.P_escaped;
+        const qStar = denom > 0 ? Math.min(1, effectiveGain / denom) : 1;
+        const eCheat = (1 - q) * effectiveGain - q * denom;
+        const margin = effectiveGain > 0 ? eCheat / effectiveGain : 0;
+        const regime = q >= qStar ? 'full' : q >= qStar * 0.7 ? 'partial' : 'none';
+        return { type, qStar, eCheat, margin, regime };
+      });
 
   const fullDeterred = typeKPIs.filter(k => k.regime === 'full').length;
   const mixSum = p.typeMix.reduce((a, b) => a + b, 0);
   const isValid = mixSum >= 99 && mixSum <= 101 && p.k <= p.N && p.k > 0;
 
-  const handleProceed = () => {
-    initSimulation();
-    navigate('/visualiser');
+  const handleProceed = async () => {
+    try {
+      await initSimulation();
+      navigate('/visualiser');
+    } catch (err) {
+      // Error already handled in SimContext
+    }
   };
 
   return (

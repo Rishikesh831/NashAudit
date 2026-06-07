@@ -1,12 +1,14 @@
 import { useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { useSim } from '../store/SimContext';
-import { FRAUDSTER_TYPES } from '../engine/simulation';
+import { useSim, FRAUDSTER_TYPES } from '../store/SimContext';
+import { getComparison } from '../api/api';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, ReferenceLine, Area, AreaChart,
 } from 'recharts';
 import { Download } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 
 const fadeUp = {
   hidden: { opacity: 0, y: 16 },
@@ -33,18 +35,22 @@ function CustomTooltip({ active, payload, label }) {
 
 export default function StrategyComparison() {
   const { state } = useSim();
-  const { roundHistory, params, transactions } = state;
+  const { roundHistory, params } = state;
   const hasData = roundHistory.length > 0;
 
-  const totalFraudulent = transactions.filter(t => t.isFraudulent).length;
+  // Helper to get field (handles both camelCase and snake_case)
+  const f = (r, ...keys) => {
+    for (const k of keys) if (r[k] !== undefined) return r[k];
+    return 0;
+  };
 
   // KPI 5.1 — Fraud Volume Over Rounds
   const fraudVolumeData = useMemo(() =>
     roundHistory.map(r => ({
-      round: r.roundNum,
-      random: Math.round(r.randomFraud),
-      nashOptimal: Math.round(r.nashOptimalFraud),
-      council: r.councilFraud,
+      round: f(r, 'round_number', 'roundNum'),
+      random: Math.round(f(r, 'random_fraud', 'randomFraud')),
+      nashOptimal: Math.round(f(r, 'nash_optimal_fraud', 'nashOptimalFraud')),
+      council: f(r, 'council_fraud', 'councilFraud'),
     })),
     [roundHistory]
   );
@@ -52,30 +58,34 @@ export default function StrategyComparison() {
   // KPI 5.2 — Belief Convergence
   const beliefData = useMemo(() =>
     roundHistory.map(r => ({
-      round: r.roundNum,
+      round: f(r, 'round_number', 'roundNum'),
       committed: (params.k / params.N) * 100,
-      belief: r.fraudsterBelief * 100,
-      gap: r.credibilityGap * 100,
+      belief: f(r, 'fraudster_belief', 'fraudsterBelief') * 100,
+      gap: f(r, 'credibility_gap', 'credibilityGap') * 100,
     })),
     [roundHistory, params]
   );
 
   // KPI 5.3 — Cumulative Regret
   const regretData = useMemo(() =>
-    roundHistory.map(r => ({
-      round: r.roundNum,
-      actual: r.cumulativeRegret,
-      bound: Math.sqrt(r.roundNum * Math.log(r.roundNum + 1)) * 5000,
-    })),
+    roundHistory.map(r => {
+      const rn = f(r, 'round_number', 'roundNum');
+      return {
+        round: rn,
+        actual: f(r, 'cumulative_regret', 'cumulativeRegret'),
+        bound: Math.sqrt(rn * Math.log(rn + 1)) * 5000,
+      };
+    }),
     [roundHistory]
   );
 
   // KPI 5.4 — Safety Margin Trajectory
   const marginData = useMemo(() =>
     roundHistory.map(r => {
-      const row = { round: r.roundNum };
+      const row = { round: f(r, 'round_number', 'roundNum') };
+      const margins = r.margins || [];
       FRAUDSTER_TYPES.forEach((type, i) => {
-        row[type.id] = r.margins[i];
+        row[type.id] = margins[i] ?? 0;
       });
       return row;
     }),
@@ -85,8 +95,8 @@ export default function StrategyComparison() {
   // KPI 5.5 — Nash Welfare Gain
   const welfareGain = useMemo(() => {
     if (roundHistory.length === 0) return 0;
-    const totalRandom = roundHistory.reduce((s, r) => s + r.randomFraud, 0);
-    const totalCouncil = roundHistory.reduce((s, r) => s + r.councilFraud, 0);
+    const totalRandom = roundHistory.reduce((s, r) => s + f(r, 'random_fraud', 'randomFraud'), 0);
+    const totalCouncil = roundHistory.reduce((s, r) => s + f(r, 'council_fraud', 'councilFraud'), 0);
     if (totalRandom === 0) return 0;
     return ((totalRandom - totalCouncil) / totalRandom) * 100;
   }, [roundHistory]);
@@ -96,8 +106,9 @@ export default function StrategyComparison() {
     const result = {};
     FRAUDSTER_TYPES.forEach((type, i) => {
       for (const r of roundHistory) {
-        if (r.margins[i] < 0 && !result[type.id]) {
-          result[type.id] = r.roundNum;
+        const margins = r.margins || [];
+        if ((margins[i] ?? 0) < 0 && !result[type.id]) {
+          result[type.id] = f(r, 'round_number', 'roundNum');
         }
       }
     });
@@ -107,7 +118,7 @@ export default function StrategyComparison() {
   // Equilibrium round
   const equilibriumRound = useMemo(() => {
     for (const r of roundHistory) {
-      if (r.credibilityGap < 0.02) return r.roundNum;
+      if (f(r, 'credibility_gap', 'credibilityGap') < 0.02) return f(r, 'round_number', 'roundNum');
     }
     return null;
   }, [roundHistory]);
@@ -115,31 +126,32 @@ export default function StrategyComparison() {
   // Generate report
   const generateReport = () => {
     const q = params.k / params.N;
-    let report = `NASHAUDIT — GAME-THEORETIC AUDIT REPORT\n${'═'.repeat(50)}\n\n`;
+    const lastRound = roundHistory[roundHistory.length - 1];
+    let report = `NASHAUDIT — GAME-THEORETIC AUDIT REPORT\n${'\u2550'.repeat(50)}\n\n`;
 
     // §1 Executive Summary
     report += `§1 EXECUTIVE SUMMARY\n${'-'.repeat(30)}\n`;
     report += `Welfare Gain: +${welfareGain.toFixed(1)}% better deterrence than random auditing\n`;
     report += `Rounds Simulated: ${roundHistory.length}\n`;
-    report += `Full Deterrence Achieved: ${roundHistory.length > 0 ? roundHistory[roundHistory.length - 1].fullDeterred : 0}/4 types\n\n`;
+    report += `Full Deterrence Achieved: ${f(lastRound, 'full_deterred', 'fullDeterred')}/4 types\n\n`;
     report += `NashAudit's council-based audit policy achieved ${welfareGain.toFixed(1)}% better fraud deterrence compared to random auditing with identical budget.\n\n`;
 
     // §2 Game Setup
     report += `§2 GAME SETUP\n${'-'.repeat(30)}\n`;
     report += `N = ${params.N} transactions, k = ${params.k} audits, q = ${(q * 100).toFixed(1)}%\n`;
     report += `G = ₹${params.G.toLocaleString()}, P_caught = ₹${params.P_caught.toLocaleString()}, P_escaped = ₹${params.P_escaped.toLocaleString()}, α = ${params.alpha}\n\n`;
-    FRAUDSTER_TYPES.forEach((type, i) => {
-      const kpi = roundHistory.length > 0 ? roundHistory[roundHistory.length - 1].typeKPIs[i] : null;
-      report += `${type.name}: mix=${params.typeMix[i]}%, q*=${kpi ? (kpi.qStar * 100).toFixed(1) : '—'}%\n`;
+    FRAUDSTER_TYPES.forEach(type => {
+      report += `${type.name}: multiplier=${type.utilityMultiplier}\n`;
     });
     report += '\n';
 
     // §6 Certification
     report += `§6 GAME-THEORETIC CERTIFICATION\n${'-'.repeat(30)}\n`;
-    const lastRound = roundHistory[roundHistory.length - 1];
-    report += `[${lastRound && lastRound.typeKPIs.every(k => k.eCheat <= 0) ? 'X' : ' '}] E[cheat] ≤ 0 for all types\n`;
-    report += `[${lastRound && lastRound.icSatisfied ? 'X' : ' '}] IC constraints satisfied\n`;
-    report += `[${lastRound && lastRound.fullDeterred === 4 ? 'X' : ' '}] CE verified (all types in full deterrence)\n`;
+    const icSatisfied = lastRound ? (lastRound.ic_satisfied ?? lastRound.icSatisfied) : false;
+    const fullDeterred = lastRound ? f(lastRound, 'full_deterred', 'fullDeterred') : 0;
+    report += `[${fullDeterred >= 4 ? 'X' : ' '}] E[cheat] ≤ 0 for all types\n`;
+    report += `[${icSatisfied ? 'X' : ' '}] IC constraints satisfied\n`;
+    report += `[${fullDeterred >= 4 ? 'X' : ' '}] CE verified (all types in full deterrence)\n`;
     report += `[${equilibriumRound ? 'X' : ' '}] Bilateral convergence reached${equilibriumRound ? ` (round ${equilibriumRound})` : ''}\n`;
 
     const blob = new Blob([report], { type: 'text/plain' });
@@ -149,6 +161,24 @@ export default function StrategyComparison() {
     a.download = 'nashaudit_report.txt';
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  // Export current page as PDF (captures visual page)
+  const exportPDF = async () => {
+    try {
+      const el = document.getElementById('strategy-comparison-root');
+      if (!el) return;
+      const canvas = await html2canvas(el, { scale: 2 });
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      pdf.save('nashaudit_report.pdf');
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('PDF export failed', err);
+    }
   };
 
   if (!hasData) {
@@ -161,7 +191,7 @@ export default function StrategyComparison() {
   }
 
   return (
-    <div className="page-container">
+    <div className="page-container" id="strategy-comparison-root">
       <motion.div className="page-header" initial="hidden" animate="visible" custom={0} variants={fadeUp}>
         <span className="section-label">Page 5 of 5</span>
         <h1>Strategy Comparison</h1>
@@ -325,9 +355,9 @@ export default function StrategyComparison() {
         <div className="section-label" style={{ marginBottom: 12 }}>Game-Theoretic Certification</div>
         <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap', justifyContent: 'center' }}>
           {[
-            { label: 'E[cheat] ≤ 0 for all types', pass: roundHistory[roundHistory.length - 1]?.typeKPIs.every(k => k.eCheat <= 0) },
-            { label: 'IC constraints satisfied', pass: roundHistory[roundHistory.length - 1]?.icSatisfied },
-            { label: 'CE verified', pass: roundHistory[roundHistory.length - 1]?.fullDeterred === 4 },
+            { label: 'E[cheat] ≤ 0 for all types', pass: roundHistory[roundHistory.length - 1] ? f(roundHistory[roundHistory.length - 1], 'full_deterred', 'fullDeterred') >= 4 : false },
+            { label: 'IC constraints satisfied', pass: roundHistory[roundHistory.length - 1] ? (roundHistory[roundHistory.length - 1].ic_satisfied ?? roundHistory[roundHistory.length - 1].icSatisfied) : false },
+            { label: 'CE verified', pass: roundHistory[roundHistory.length - 1] ? f(roundHistory[roundHistory.length - 1], 'full_deterred', 'fullDeterred') >= 4 : false },
             { label: 'Bilateral convergence', pass: !!equilibriumRound },
           ].map(cert => (
             <div key={cert.label} style={{
@@ -345,10 +375,16 @@ export default function StrategyComparison() {
           ))}
         </div>
 
-        <button className="btn-download" onClick={generateReport}>
-          <Download size={18} />
-          Download Full Report
-        </button>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <button className="btn-download" onClick={generateReport}>
+            <Download size={18} />
+            Download Full Report
+          </button>
+          <button className="btn-download" onClick={exportPDF} title="Export PDF">
+            <Download size={18} />
+            Export PDF
+          </button>
+        </div>
       </motion.div>
     </div>
   );

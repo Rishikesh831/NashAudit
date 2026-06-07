@@ -1,11 +1,12 @@
-"""
-NashAudit — Round Pipeline
-Phase 1 Task 7-8: Wires all layers (1→5) into a single round execution.
-Phase 2: Now uses real GT computations instead of stubs.
+"""NashAudit — Round Pipeline
+Phase 1-4: Wires all layers (1→5) into a single round execution.
+Now uses ML models (XGBoost) for risk scoring and alpha estimation,
+NIM-first council deliberation, and NetworkX coalition detection.
 """
 
 import json
 import random
+import logging
 from typing import Optional
 
 from .config_loader import get_agents, build_default_params
@@ -26,6 +27,10 @@ from .game_theory import (
     get_deterrence_regime,
 )
 from .council_stub import run_council_deliberation
+from .ml_models import predict_risk_score, predict_alpha, detect_coalitions, apply_coalition_labels, models_ready
+from ..db import repository as repo
+
+logger = logging.getLogger("nashaudit.pipeline")
 
 
 def run_simulation_round(
@@ -64,14 +69,22 @@ def run_simulation_round(
         "k": k,
     }
 
-    # ─── Layer 1: Risk Scoring ───
+    # ─── Layer 1: Risk Scoring (XGBoost if available, sigmoid fallback) ───
     for txn in transactions:
-        txn["risk_score"] = compute_risk_score(txn.get("features", {}))
+        if models_ready():
+            txn["risk_score"] = predict_risk_score(txn.get("features", {}))
+        else:
+            txn["risk_score"] = compute_risk_score(txn.get("features", {}))
 
     # Compute type KPIs
     type_kpis = {}
     for type_id in FRAUDSTER_TYPES:
         type_kpis[type_id] = compute_type_kpis(type_id, q, G, alpha, P_caught, P_escaped)
+
+    # ─── Layer 4C: ML Coalition Detection (NetworkX) ───
+    if models_ready():
+        ml_coalitions = detect_coalitions(transactions)
+        apply_coalition_labels(transactions, ml_coalitions)
 
     # ─── Layer 4B: Shapley Values for Coalitions ───
     coalition_groups = {}
@@ -83,7 +96,7 @@ def run_simulation_round(
     for cid, members in coalition_groups.items():
         compute_shapley_values(members)
 
-    # ─── Layer 2: Council Deliberation ───
+    # ─── Layer 2: Council Deliberation (NIM-first, stub-fallback) ───
     # Sort by risk score, take top 2k candidates
     sorted_txns = sorted(transactions, key=lambda t: t["risk_score"], reverse=True)
     candidates = sorted_txns[: min(k * 2, N)]
@@ -95,6 +108,24 @@ def run_simulation_round(
             "transaction": txn,
             "deliberation": delib,
         })
+
+        # Log LLM calls for each agent in the deliberation
+        for agent_pos in delib.get("round1", []):
+            try:
+                repo.log_llm_call(
+                    simulation_id=simulation_id,
+                    round_number=round_number,
+                    agent_id=agent_pos["agent"]["id"],
+                    context_toml="",
+                    response_raw=agent_pos.get("reasoning", ""),
+                    position=agent_pos.get("position"),
+                    confidence=agent_pos.get("confidence"),
+                    reasoning=agent_pos.get("reasoning"),
+                    latency_ms=agent_pos.get("latency_ms", 0),
+                    stub_used=agent_pos.get("stub_used", True),
+                )
+            except Exception as e:
+                logger.debug(f"Failed to log LLM call: {e}")
 
     # ─── Layer 3: CE Allocation ───
     ce_result = compute_ce_allocation(transactions, k, G, alpha, P_caught, P_escaped)

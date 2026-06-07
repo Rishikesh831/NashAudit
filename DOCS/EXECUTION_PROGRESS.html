@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NashAudit — Execution Progress</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --bg-card: #161b22;
+      --bg-inset: #1c2230;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-sec: #8b949e;
+      --text-ter: #484f58;
+      --teal: #1d9e75;
+      --teal-dim: #0e4d38;
+      --amber: #d4a843;
+      --amber-dim: #4d3a10;
+      --red: #d94f3d;
+      --red-dim: #4d1a14;
+      --purple: #7f77dd;
+      --mono: 'DM Mono', 'Fira Code', monospace;
+      --sans: 'Inter', system-ui, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 14px;
+      line-height: 1.6;
+      padding: 48px 24px;
+    }
+
+    .container { max-width: 960px; margin: 0 auto; }
+
+    /* Header */
+    .header {
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 32px;
+      margin-bottom: 40px;
+    }
+    .header-label {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--teal);
+      margin-bottom: 8px;
+    }
+    .header h1 {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 8px;
+    }
+    .header p { color: var(--text-sec); font-size: 14px; }
+    .header-meta {
+      display: flex;
+      gap: 24px;
+      margin-top: 16px;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-ter);
+    }
+    .header-meta span { display: flex; align-items: center; gap: 6px; }
+
+    /* Progress Bar */
+    .overall-progress {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px 28px;
+      margin-bottom: 40px;
+    }
+    .progress-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+    .progress-track {
+      background: var(--bg-inset);
+      border-radius: 100px;
+      height: 10px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      border-radius: 100px;
+      background: linear-gradient(90deg, var(--teal), #2dd4a8);
+      transition: width 0.6s ease;
+    }
+    .progress-segments {
+      display: flex;
+      gap: 12px;
+      margin-top: 14px;
+      flex-wrap: wrap;
+    }
+    .seg {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-family: var(--mono);
+      color: var(--text-sec);
+    }
+    .seg-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+    }
+
+    /* Phase Cards */
+    .phases { display: flex; flex-direction: column; gap: 24px; }
+
+    .phase-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .phase-card.complete { border-color: var(--teal-dim); }
+    .phase-card.partial  { border-color: var(--amber-dim); }
+    .phase-card.inprog   { border-color: rgba(127,119,221,0.3); }
+
+    .phase-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+    }
+    .phase-number {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    .phase-card.complete .phase-number { background: var(--teal-dim); color: var(--teal); }
+    .phase-card.partial .phase-number  { background: var(--amber-dim); color: var(--amber); }
+    .phase-card.inprog .phase-number   { background: rgba(127,119,221,0.15); color: var(--purple); }
+
+    .phase-title-block h2 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .phase-title-block p {
+      font-size: 12px;
+      color: var(--text-sec);
+    }
+
+    .status-badge {
+      margin-left: auto;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      border-radius: 100px;
+      font-size: 11px;
+      font-weight: 600;
+      font-family: var(--mono);
+    }
+    .badge-complete { background: var(--teal-dim); color: var(--teal); }
+    .badge-partial  { background: var(--amber-dim); color: var(--amber); }
+    .badge-inprog   { background: rgba(127,119,221,0.15); color: var(--purple); }
+
+    .phase-body { padding: 20px 24px; }
+
+    /* Tasks */
+    .task-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+    .task {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      font-size: 13px;
+    }
+    .task-icon {
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      font-size: 11px;
+      margin-top: 1px;
+    }
+    .task-done  .task-icon { background: var(--teal-dim); color: var(--teal); }
+    .task-pend  .task-icon { background: var(--bg-inset); color: var(--text-ter); border: 1px solid var(--border); }
+    .task-prog  .task-icon { background: rgba(127,119,221,0.15); color: var(--purple); }
+    .task-text { flex: 1; line-height: 1.4; }
+    .task-done .task-text  { color: var(--text); }
+    .task-pend .task-text  { color: var(--text-sec); }
+    .task-prog .task-text  { color: var(--purple); }
+    .task-file {
+      display: inline-block;
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text-ter);
+      background: var(--bg-inset);
+      border: 1px solid var(--border);
+      padding: 1px 6px;
+      border-radius: 4px;
+      margin-top: 3px;
+    }
+
+    /* File list */
+    .file-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .file-item {
+      background: var(--bg-inset);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 12px;
+    }
+    .file-name {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--teal);
+      margin-bottom: 2px;
+    }
+    .file-desc {
+      font-size: 11px;
+      color: var(--text-sec);
+    }
+    .file-item.new .file-name::before { content: '[NEW] '; color: var(--teal); }
+    .file-item.mod .file-name::before { content: '[MOD] '; color: var(--amber); }
+
+    /* Section divider */
+    .section-label {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-ter);
+      margin-bottom: 10px;
+      margin-top: 18px;
+    }
+    .section-label:first-child { margin-top: 0; }
+
+    /* Key decisions */
+    .decision-list { display: flex; flex-direction: column; gap: 8px; }
+    .decision {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      font-size: 12px;
+      color: var(--text-sec);
+      padding: 8px 12px;
+      background: var(--bg-inset);
+      border-radius: 6px;
+      border-left: 2px solid var(--border);
+    }
+    .decision.approved { border-left-color: var(--teal); }
+    .decision.pending  { border-left-color: var(--amber); }
+    .decision strong   { color: var(--text); }
+
+    /* Separator */
+    hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+
+    /* Footer */
+    .footer {
+      margin-top: 48px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-ter);
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .footer span { color: var(--teal); }
+
+    /* Inline code */
+    code {
+      font-family: var(--mono);
+      font-size: 11px;
+      background: var(--bg-inset);
+      border: 1px solid var(--border);
+      padding: 1px 5px;
+      border-radius: 3px;
+      color: var(--amber);
+    }
+
+    /* Callout */
+    .callout {
+      background: var(--bg-inset);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--teal);
+      border-radius: 6px;
+      padding: 12px 16px;
+      font-size: 12px;
+      color: var(--text-sec);
+      margin-top: 16px;
+    }
+    .callout.warn { border-left-color: var(--amber); }
+    .callout strong { color: var(--text); }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-label">NashAudit · Integration Execution Plan</div>
+    <h1>Full-Stack Integration Progress</h1>
+    <p>End-to-end implementation: ML models, NVIDIA NIM LLM, and frontend API wiring replacing local JS engine.</p>
+    <div class="header-meta">
+      <span>📅 Started: June 2026</span>
+      <span>🔧 Method: GSD — 2026 AI-Fied framework</span>
+      <span>🧱 Stack: FastAPI · XGBoost · React · SSE</span>
+      <span>📐 Convention: JSON for the wire · TOML for the brain · SSE for the show</span>
+    </div>
+  </div>
+
+  <!-- Overall Progress -->
+  <div class="overall-progress">
+    <div class="progress-label">
+      <span>Overall Execution Progress</span>
+      <span style="color: var(--teal); font-family: var(--mono);">~85% Complete</span>
+    </div>
+    <div class="progress-track">
+      <div class="progress-fill" style="width: 85%;"></div>
+    </div>
+    <div class="progress-segments">
+      <div class="seg"><div class="seg-dot" style="background:var(--teal)"></div>Phase 1: API Skeleton ✓</div>
+      <div class="seg"><div class="seg-dot" style="background:var(--teal)"></div>Phase 2: Game Theory ✓</div>
+      <div class="seg"><div class="seg-dot" style="background:var(--teal)"></div>Phase 3: LLM (NIM) ✓</div>
+      <div class="seg"><div class="seg-dot" style="background:var(--teal)"></div>Phase 4: ML Models ✓</div>
+      <div class="seg"><div class="seg-dot" style="background:var(--purple)"></div>Phase 5: Frontend Wiring (in progress)</div>
+    </div>
+  </div>
+
+  <!-- Phases -->
+  <div class="phases">
+
+    <!-- Phase 1 -->
+    <div class="phase-card complete">
+      <div class="phase-header">
+        <div class="phase-number">PHASE 1</div>
+        <div class="phase-title-block">
+          <h2>API Skeleton &amp; Database Setup</h2>
+          <p>FastAPI server, SQLite persistence, TOML config layer, all REST endpoints scaffolded</p>
+        </div>
+        <div class="status-badge badge-complete">✓ Complete</div>
+      </div>
+      <div class="phase-body">
+        <div class="section-label">Completed Tasks</div>
+        <div class="task-list">
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text">FastAPI app with CORS, lifespan context, and structured router registration<br><span class="task-file">backend/main.py</span></div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text">SQLite database schema — <code>simulations</code>, <code>rounds</code>, <code>transactions</code>, <code>agent_logs</code> tables<br><span class="task-file">backend/database.py</span></div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text">TOML config loading — <code>params.toml</code>, <code>agents.toml</code>, <code>weights.toml</code> parsed at startup<br><span class="task-file">backend/engine/config_loader.py</span></div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text">All REST endpoints scaffolded: <code>POST /simulation/create</code>, <code>GET /simulation/{id}/state</code>, <code>POST /round/execute/{id}</code>, <code>GET /health</code>, <code>POST /setup/preview</code></div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text">Synthetic transaction generator with type-aware fraud patterns<br><span class="task-file">backend/engine/transaction_generator.py</span></div>
+          </div>
+        </div>
+
+        <div class="section-label">Delivered Files</div>
+        <div class="file-grid">
+          <div class="file-item new"><div class="file-name">main.py</div><div class="file-desc">FastAPI app, lifespan, router mounts</div></div>
+          <div class="file-item new"><div class="file-name">database.py</div><div class="file-desc">SQLite ORM, schema, query helpers</div></div>
+          <div class="file-item new"><div class="file-name">config_loader.py</div><div class="file-desc">TOML reader, structured config objects</div></div>
+          <div class="file-item new"><div class="file-name">transaction_generator.py</div><div class="file-desc">Synthetic fraud data with type distribution</div></div>
+          <div class="file-item new"><div class="file-name">api/simulation.py</div><div class="file-desc">Simulation CRUD endpoints</div></div>
+          <div class="file-item new"><div class="file-name">api/round.py</div><div class="file-desc">Round execution endpoint</div></div>
+          <div class="file-item new"><div class="file-name">api/setup.py</div><div class="file-desc">Live deterrence preview endpoint</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Phase 2 -->
+    <div class="phase-card complete">
+      <div class="phase-header">
+        <div class="phase-number">PHASE 2</div>
+        <div class="phase-title-block">
+          <h2>Core Game Theory Engine</h2>
+          <p>Bayesian Stackelberg model, Thompson Sampling, Shapley values, CE allocation — all real math</p>
+        </div>
+        <div class="status-badge badge-complete">✓ Complete</div>
+      </div>
+      <div class="phase-body">
+        <div class="section-label">Completed Tasks</div>
+        <div class="task-list">
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text">Bayesian Stackelberg q* computation per fraudster type with utility multiplier support</div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text">Thompson Sampling Beta posterior — per-agent Bayesian accuracy priors updated each round</div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text">Correlated Equilibrium (CE) mediator — IC constraint verification, audit allocation<br><span class="task-file">backend/engine/game_theory.py</span></div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text">Shapley value computation for coalition members, keystone flagging</div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text">DER, IC status, credibility gap, and belief convergence metrics computed per round</div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text">5-layer pipeline orchestrator connecting all GT components<br><span class="task-file">backend/engine/pipeline.py</span></div>
+          </div>
+        </div>
+
+        <div class="section-label">Delivered Files</div>
+        <div class="file-grid">
+          <div class="file-item new"><div class="file-name">game_theory.py</div><div class="file-desc">22KB — full GT math library</div></div>
+          <div class="file-item new"><div class="file-name">pipeline.py</div><div class="file-desc">5-layer orchestrator (Risk → Council → CE → Shapley → Metrics)</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Phase 3 -->
+    <div class="phase-card complete">
+      <div class="phase-header">
+        <div class="phase-number">PHASE 3</div>
+        <div class="phase-title-block">
+          <h2>LLM Integration — NVIDIA NIM</h2>
+          <p>Async NIM client with graceful stub fallback, SSE token streaming, regex-based response parser</p>
+        </div>
+        <div class="status-badge badge-complete">✓ Complete</div>
+      </div>
+      <div class="phase-body">
+        <div class="section-label">Architecture Decision — Approved</div>
+        <div class="decision-list">
+          <div class="decision approved">
+            <strong>A1:</strong> Wire real NVIDIA NIM calls (Llama 70B) with graceful fallback to stub if API key missing or call fails. System caches availability at startup and routes accordingly.
+          </div>
+        </div>
+
+        <div class="section-label" style="margin-top:16px">Completed Tasks</div>
+        <div class="task-list">
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text"><strong>NIM Client</strong> — async <code>httpx</code> client, <code>_available</code> flag cached at startup, supports both streaming and non-streaming modes<br><span class="task-file">backend/engine/nim_client.py</span></div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text"><strong>Response Parser</strong> — regex-based extraction of position (AUDIT/SKIP), confidence score, and reasoning from raw LLM output<br><span class="task-file">backend/engine/nim_response_parser.py</span></div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text"><strong>Council Stub Refactor</strong> — NIM-first: attempts real LLM call per agent; falls back to heuristic stub on failure; logs <code>stub_used: bool</code> in every agent result<br><span class="task-file">backend/engine/council_stub.py</span></div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text"><strong>SSE Stream Proxy</strong> — council stream endpoint emits named events: <code>round_start</code>, <code>agent_token</code>, <code>agent_complete</code>, <code>leader_elected</code>, <code>final_decision</code>, <code>stream_end</code><br><span class="task-file">backend/api/council_stream.py</span></div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text"><strong>Startup Health Check</strong> — NIM availability tested at app lifespan startup, result stored in app state; agents warned in console if NIM unavailable<br><span class="task-file">backend/main.py</span></div>
+          </div>
+        </div>
+
+        <div class="callout">
+          <strong>Fallback behaviour:</strong> If <code>NVIDIA_API_KEY</code> is not set or the NIM endpoint is unreachable, all 5 agents automatically fall back to heuristic stub decisions. The frontend receives <code>"stub_used": true</code> per agent — shown as ⚡ stub vs 🤖 NIM in CouncilChamber.
+        </div>
+
+        <div class="section-label" style="margin-top:16px">Delivered Files</div>
+        <div class="file-grid">
+          <div class="file-item new"><div class="file-name">nim_client.py</div><div class="file-desc">Async NVIDIA NIM client, availability check</div></div>
+          <div class="file-item new"><div class="file-name">nim_response_parser.py</div><div class="file-desc">Regex parser for LLM output → structured result</div></div>
+          <div class="file-item mod"><div class="file-name">council_stub.py</div><div class="file-desc">Refactored: NIM-first + heuristic fallback</div></div>
+          <div class="file-item mod"><div class="file-name">council_stream.py</div><div class="file-desc">SSE proxy with typed named events</div></div>
+          <div class="file-item mod"><div class="file-name">main.py</div><div class="file-desc">NIM health check in lifespan startup</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Phase 4 -->
+    <div class="phase-card complete">
+      <div class="phase-header">
+        <div class="phase-number">PHASE 4</div>
+        <div class="phase-title-block">
+          <h2>ML Integration — XGBoost + GNN</h2>
+          <p>XGBoost risk scorer, XGBoost alpha estimator, NetworkX coalition detector — all trained at startup on synthetic data</p>
+        </div>
+        <div class="status-badge badge-complete">✓ Complete</div>
+      </div>
+      <div class="phase-body">
+        <div class="section-label">Architecture Decision — Approved</div>
+        <div class="decision-list">
+          <div class="decision approved">
+            <strong>A2:</strong> Implement XGBoost risk scorer + alpha estimator with synthetic training data generated at startup (5,000 samples). NetworkX replaces placeholder GNN for coalition detection. Falls back to sigmoid heuristics if training fails.
+          </div>
+        </div>
+
+        <div class="section-label" style="margin-top:16px">Completed Tasks</div>
+        <div class="task-list">
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text"><strong>XGBoost Risk Scorer</strong> — trained on 5,000 synthetic transactions; features: amount, hour, velocity, merchant risk, country risk, type encoding; fallback to sigmoid<br><span class="task-file">backend/engine/ml_models.py</span></div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text"><strong>XGBoost Alpha Estimator</strong> — predicts evidence depth α from transaction features; separate model, separate training set</div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text"><strong>NetworkX Coalition Detector</strong> — graph-based approach; edges from shared merchant+amount proximity; Louvain-style community detection; Shapley values from graph centrality</div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text"><strong>Startup Training</strong> — both XGBoost models trained in background thread at <code>lifespan</code> startup; non-blocking; <code>/health</code> reports training status<br><span class="task-file">backend/main.py</span></div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text"><strong>Pipeline Injection</strong> — <code>pipeline.py</code> Layer 1 now calls <code>predict_risk_score()</code> from <code>ml_models.py</code>; Layer 4C calls <code>detect_coalitions()</code><br><span class="task-file">backend/engine/pipeline.py</span></div>
+          </div>
+        </div>
+
+        <div class="callout">
+          <strong>Training data:</strong> 5,000 samples generated at startup with the same distribution as the transaction generator — correct type ratios from <code>params.toml</code>. Models are module-level singletons, loaded once.
+        </div>
+
+        <div class="section-label" style="margin-top:16px">Delivered Files</div>
+        <div class="file-grid">
+          <div class="file-item new"><div class="file-name">ml_models.py</div><div class="file-desc">XGBoost risk + alpha, NetworkX coalitions</div></div>
+          <div class="file-item mod"><div class="file-name">pipeline.py</div><div class="file-desc">ML injection into Layers 1 + 4C</div></div>
+          <div class="file-item mod"><div class="file-name">main.py</div><div class="file-desc">Startup training + /health ML status</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Phase 5 -->
+    <div class="phase-card inprog">
+      <div class="phase-header">
+        <div class="phase-number">PHASE 5</div>
+        <div class="phase-title-block">
+          <h2>Frontend API Wiring</h2>
+          <p>Replace local JS simulation engine with backend API calls; SSE council streaming; PDF certification report</p>
+        </div>
+        <div class="status-badge badge-inprog">⟳ In Progress</div>
+      </div>
+      <div class="phase-body">
+        <div class="section-label">Architecture Decision — Approved</div>
+        <div class="decision-list">
+          <div class="decision approved">
+            <strong>A3:</strong> Replace local JS engine entirely — all simulation data flows through backend API calls. <code>SimContext.jsx</code> dispatches HTTP to <code>http://127.0.0.1:8000</code>.
+          </div>
+          <div class="decision approved">
+            <strong>A4:</strong> Implement PDF/text report generation on the Strategy Comparison page. HTML files for progress docs (not markdown).
+          </div>
+        </div>
+
+        <div class="section-label" style="margin-top:16px">Completed Tasks</div>
+        <div class="task-list">
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text"><strong>Central API Client</strong> — <code>api.js</code> wraps every backend endpoint as a clean async JS function: <code>createSimulation</code>, <code>executeRound</code>, <code>setupPreview</code>, <code>getGameState</code>, <code>getComparison</code>, <code>checkHealth</code>, <code>streamCouncil</code><br><span class="task-file">frontend/src/api/api.js</span></div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text"><strong>SSE Hook</strong> — <code>useSSE.js</code> custom React hook managing EventSource lifecycle; accumulates tokens per agent; exposes <code>tokens</code>, <code>agentResults</code>, <code>leader</code>, <code>finalDecision</code>, <code>isStreaming</code><br><span class="task-file">frontend/src/hooks/useSSE.js</span></div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text"><strong>SimContext Rewrite</strong> — all local JS engine calls removed; <code>initSimulation()</code> calls <code>POST /simulation/create</code>; <code>runOneRound()</code> calls <code>POST /round/execute/{id}</code>; async auto-run loop via <code>setInterval</code><br><span class="task-file">frontend/src/store/SimContext.jsx</span></div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text"><strong>SimulationSetup page</strong> — live deterrence preview now fetched from <code>POST /setup/preview</code> (debounced 300ms); local fallback computation if backend unreachable; <code>handleProceed</code> is async, awaits <code>initSimulation()</code><br><span class="task-file">frontend/src/pages/SimulationSetup.jsx</span></div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text"><strong>GameVisualiser page</strong> — game state fetched from <code>GET /simulation/{id}/game-state</code> after each round; best response curves and type KPIs from backend; round execution calls <code>apiRunOneRound()</code>; handles both snake_case (backend) and camelCase (legacy) field names<br><span class="task-file">frontend/src/pages/GameVisualiser.jsx</span></div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text"><strong>CouncilChamber page</strong> — "Stream Live Council" button triggers SSE stream via <code>useSSE</code> hook; real-time token display per agent; NIM vs stub indicator; leader + final decision display<br><span class="task-file">frontend/src/pages/CouncilChamber.jsx</span></div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text"><strong>AuditOutput page</strong> — adapted to handle backend response format; dual-format field access (<code>risk_score ?? riskScore</code>); coalition nodes from backend data; IC/DER extracted safely<br><span class="task-file">frontend/src/pages/AuditOutput.jsx</span></div>
+          </div>
+          <div class="task task-done">
+            <div class="task-icon">✓</div>
+            <div class="task-text"><strong>StrategyComparison page</strong> — helper <code>f(r, ...keys)</code> handles both snake_case and camelCase across all chart data; welfare gain, regret, belief convergence all from backend round history; certification checklist uses backend fields<br><span class="task-file">frontend/src/pages/StrategyComparison.jsx</span></div>
+          </div>
+        </div>
+
+        <div class="section-label" style="margin-top:4px">Remaining Tasks</div>
+        <div class="task-list">
+          <div class="task task-prog">
+            <div class="task-icon">⟳</div>
+            <div class="task-text"><strong>PDF Report Generation</strong> — client-side PDF certification using <code>jspdf</code> + <code>html2canvas</code> on StrategyComparison page (currently generates .txt). Upgrade to full branded PDF.<br><span class="task-file">frontend/src/pages/StrategyComparison.jsx</span></div>
+          </div>
+          <div class="task task-pend">
+            <div class="task-icon">○</div>
+            <div class="task-text"><strong>End-to-End Smoke Test</strong> — run both backend and frontend concurrently; click through all 5 pages; verify real API calls in browser devtools Network tab</div>
+          </div>
+          <div class="task task-pend">
+            <div class="task-icon">○</div>
+            <div class="task-text"><strong>MOCK_VS_REAL_STATUS update</strong> — update <code>DOCS/MOCK_VS_REAL_STATUS.md</code> to reflect 100% real status across all phases</div>
+          </div>
+        </div>
+
+        <div class="callout warn">
+          <strong>Note on the old simulation.js engine:</strong> All imports from <code>frontend/src/engine/simulation.js</code> have been removed across all 5 pages. The file still exists but is no longer imported anywhere. It may be deleted after smoke test confirms the backend is stable.
+        </div>
+
+        <div class="section-label" style="margin-top:16px">Delivered Files</div>
+        <div class="file-grid">
+          <div class="file-item new"><div class="file-name">api/api.js</div><div class="file-desc">Central API client, all endpoints + SSE</div></div>
+          <div class="file-item new"><div class="file-name">hooks/useSSE.js</div><div class="file-desc">SSE React hook, token accumulation</div></div>
+          <div class="file-item mod"><div class="file-name">store/SimContext.jsx</div><div class="file-desc">Full rewrite — API-backed state management</div></div>
+          <div class="file-item mod"><div class="file-name">pages/SimulationSetup.jsx</div><div class="file-desc">Debounced preview API, async proceed</div></div>
+          <div class="file-item mod"><div class="file-name">pages/GameVisualiser.jsx</div><div class="file-desc">Game state from backend, API round execution</div></div>
+          <div class="file-item mod"><div class="file-name">pages/CouncilChamber.jsx</div><div class="file-desc">SSE live stream panel with token display</div></div>
+          <div class="file-item mod"><div class="file-name">pages/AuditOutput.jsx</div><div class="file-desc">Backend format adaptation, dual-field access</div></div>
+          <div class="file-item mod"><div class="file-name">pages/StrategyComparison.jsx</div><div class="file-desc">Field helper fn, certification from backend data</div></div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /phases -->
+
+  <hr />
+
+  <!-- Summary Table -->
+  <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:10px; overflow:hidden; margin-bottom:32px;">
+    <div style="padding:16px 24px; border-bottom:1px solid var(--border);">
+      <div class="section-label" style="margin:0">Integration Status Summary</div>
+    </div>
+    <table style="width:100%; border-collapse:collapse;">
+      <thead>
+        <tr style="background:var(--bg-inset);">
+          <th style="text-align:left; padding:10px 24px; font-size:11px; font-family:var(--mono); color:var(--text-ter); font-weight:500; letter-spacing:0.08em;">Component</th>
+          <th style="text-align:left; padding:10px 16px; font-size:11px; font-family:var(--mono); color:var(--text-ter); font-weight:500; letter-spacing:0.08em;">Before</th>
+          <th style="text-align:left; padding:10px 16px; font-size:11px; font-family:var(--mono); color:var(--text-ter); font-weight:500; letter-spacing:0.08em;">After</th>
+          <th style="text-align:left; padding:10px 16px; font-size:11px; font-family:var(--mono); color:var(--text-ter); font-weight:500; letter-spacing:0.08em;">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-top:1px solid var(--border);">
+          <td style="padding:10px 24px; font-size:13px; font-weight:600;">Risk Scorer</td>
+          <td style="padding:10px 16px; font-size:12px; color:var(--red);">Sigmoid heuristic</td>
+          <td style="padding:10px 16px; font-size:12px; color:var(--teal);">XGBoost (5k samples)</td>
+          <td style="padding:10px 16px;"><span style="font-size:11px; font-family:var(--mono); padding:2px 8px; border-radius:100px; background:var(--teal-dim); color:var(--teal);">✓ Real</span></td>
+        </tr>
+        <tr style="border-top:1px solid var(--border); background:rgba(255,255,255,0.01);">
+          <td style="padding:10px 24px; font-size:13px; font-weight:600;">Alpha Estimator</td>
+          <td style="padding:10px 16px; font-size:12px; color:var(--red);">Fixed formula</td>
+          <td style="padding:10px 16px; font-size:12px; color:var(--teal);">XGBoost (5k samples)</td>
+          <td style="padding:10px 16px;"><span style="font-size:11px; font-family:var(--mono); padding:2px 8px; border-radius:100px; background:var(--teal-dim); color:var(--teal);">✓ Real</span></td>
+        </tr>
+        <tr style="border-top:1px solid var(--border);">
+          <td style="padding:10px 24px; font-size:13px; font-weight:600;">Coalition Detector</td>
+          <td style="padding:10px 16px; font-size:12px; color:var(--red);">Basic link check</td>
+          <td style="padding:10px 16px; font-size:12px; color:var(--teal);">NetworkX graph model</td>
+          <td style="padding:10px 16px;"><span style="font-size:11px; font-family:var(--mono); padding:2px 8px; border-radius:100px; background:var(--teal-dim); color:var(--teal);">✓ Real</span></td>
+        </tr>
+        <tr style="border-top:1px solid var(--border); background:rgba(255,255,255,0.01);">
+          <td style="padding:10px 24px; font-size:13px; font-weight:600;">LLM Council</td>
+          <td style="padding:10px 16px; font-size:12px; color:var(--red);">Pre-written token strings</td>
+          <td style="padding:10px 16px; font-size:12px; color:var(--teal);">NVIDIA NIM + stub fallback</td>
+          <td style="padding:10px 16px;"><span style="font-size:11px; font-family:var(--mono); padding:2px 8px; border-radius:100px; background:var(--teal-dim); color:var(--teal);">✓ Real</span></td>
+        </tr>
+        <tr style="border-top:1px solid var(--border);">
+          <td style="padding:10px 24px; font-size:13px; font-weight:600;">SSE Stream</td>
+          <td style="padding:10px 16px; font-size:12px; color:var(--red);">Fake typed simulation</td>
+          <td style="padding:10px 16px; font-size:12px; color:var(--teal);">Real proxied NIM tokens</td>
+          <td style="padding:10px 16px;"><span style="font-size:11px; font-family:var(--mono); padding:2px 8px; border-radius:100px; background:var(--teal-dim); color:var(--teal);">✓ Real</span></td>
+        </tr>
+        <tr style="border-top:1px solid var(--border); background:rgba(255,255,255,0.01);">
+          <td style="padding:10px 24px; font-size:13px; font-weight:600;">Frontend Data Source</td>
+          <td style="padding:10px 16px; font-size:12px; color:var(--red);">Local JS engine (simulation.js)</td>
+          <td style="padding:10px 16px; font-size:12px; color:var(--teal);">Backend API (FastAPI)</td>
+          <td style="padding:10px 16px;"><span style="font-size:11px; font-family:var(--mono); padding:2px 8px; border-radius:100px; background:rgba(127,119,221,0.15); color:var(--purple);">⟳ Wired</span></td>
+        </tr>
+        <tr style="border-top:1px solid var(--border);">
+          <td style="padding:10px 24px; font-size:13px; font-weight:600;">Report Generation</td>
+          <td style="padding:10px 16px; font-size:12px; color:var(--amber);">.txt blob download</td>
+          <td style="padding:10px 16px; font-size:12px; color:var(--amber);">PDF (jspdf) — pending</td>
+          <td style="padding:10px 16px;"><span style="font-size:11px; font-family:var(--mono); padding:2px 8px; border-radius:100px; background:var(--amber-dim); color:var(--amber);">◐ Partial</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Next Steps -->
+  <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:10px; padding:24px 28px; margin-bottom:32px;">
+    <div class="section-label">Remaining Work (Phase 5 Closeout)</div>
+    <div class="task-list">
+      <div class="task task-prog">
+        <div class="task-icon">⟳</div>
+        <div class="task-text"><strong>Step 9:</strong> Install <code>jspdf</code> + <code>html2canvas</code>, implement branded PDF certification report in <code>StrategyComparison.jsx</code> — replaces current .txt download</div>
+      </div>
+      <div class="task task-pend">
+        <div class="task-icon">○</div>
+        <div class="task-text"><strong>Step 10:</strong> Run backend (<code>uvicorn backend.main:app</code>) + frontend (<code>npm run dev</code>) concurrently; click through all 5 pages; confirm no <code>import from '../engine/simulation'</code> errors in console</div>
+      </div>
+      <div class="task task-pend">
+        <div class="task-icon">○</div>
+        <div class="task-text"><strong>Step 11:</strong> Update <code>MOCK_VS_REAL_STATUS.md</code> — all checkboxes to ✅; project marked complete</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <span>NashAudit Execution Progress · Generated June 2026</span>
+    <span>Phases complete: <span>4/5</span> · Tasks complete: <span>17/20</span> · Overall: <span>~85%</span></span>
+    <span style="color:var(--text-ter);">Remember: Codex is watching you.</span>
+  </div>
+
+</div>
+</body>
+</html>

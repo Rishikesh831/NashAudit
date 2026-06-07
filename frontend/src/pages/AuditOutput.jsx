@@ -1,7 +1,6 @@
 import { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { useSim } from '../store/SimContext';
-import { FRAUDSTER_TYPES, AGENTS } from '../engine/simulation';
+import { useSim, FRAUDSTER_TYPES, AGENTS } from '../store/SimContext';
 import { ChevronDown, ChevronUp, Star } from 'lucide-react';
 
 const fadeUp = {
@@ -52,18 +51,22 @@ export default function AuditOutput() {
   // Coalition graph data from latest round
   const coalitionNodes = useMemo(() => {
     if (!latestRound) return [];
-    const colluding = latestRound.auditDecisions
-      .filter(d => d.transaction.coalitionId)
+    const decisions = latestRound.audit_decisions || latestRound.auditDecisions || [];
+    return decisions
+      .filter(d => d.transaction?.coalition_id || d.transaction?.coalitionId)
       .map(d => d.transaction);
-    return colluding;
   }, [latestRound]);
 
-  // Active types
+  // Active types from backend type_kpis or frontend typeKPIs
   const activeTypes = useMemo(() => {
     if (!latestRound) return [];
-    return latestRound.typeKPIs
-      .map((kpi, i) => ({ ...kpi, type: FRAUDSTER_TYPES[i] }))
-      .filter(k => k.regime !== 'full');
+    const kpis = latestRound.type_kpis || latestRound.typeKPIs;
+    if (!kpis) return [];
+    // Handle both array and object formats
+    const kpiList = Array.isArray(kpis)
+      ? kpis.map((kpi, i) => ({ ...kpi, type: FRAUDSTER_TYPES[i] || { id: kpi.type_id, name: kpi.type_name, color: '#888' } }))
+      : Object.entries(kpis).map(([tid, kpi]) => ({ ...kpi, type: FRAUDSTER_TYPES.find(t => t.id === tid) || { id: tid, name: tid, color: '#888' } }));
+    return kpiList.filter(k => k.regime !== 'full');
   }, [latestRound]);
 
   if (!hasData) {
@@ -75,7 +78,9 @@ export default function AuditOutput() {
     );
   }
 
-  const auditDecisions = latestRound.auditDecisions;
+  const auditDecisions = latestRound.audit_decisions || latestRound.auditDecisions || [];
+  const icSatisfied = latestRound.ic_satisfied ?? latestRound.icSatisfied ?? false;
+  const DER = latestRound.DER ?? 0;
 
   return (
     <div className="page-container">
@@ -94,11 +99,11 @@ export default function AuditOutput() {
           <div className="kpi-label">Deterrence Efficiency Ratio</div>
           <div className="formula-block" style={{ fontSize: 10 }}>DER = deterred / k</div>
           <GaugeArc
-            value={latestRound.DER}
-            color={latestRound.DER > 0.7 ? '#1D9E75' : latestRound.DER > 0.4 ? '#D4A843' : '#D94F3D'}
+            value={DER}
+            color={DER > 0.7 ? '#1D9E75' : DER > 0.4 ? '#D4A843' : '#D94F3D'}
           />
           <div className="kpi-interpretation">
-            {(latestRound.DER * 100).toFixed(0)}% of our audit budget produced full deterrence.
+            {(DER * 100).toFixed(0)}% of our audit budget produced full deterrence.
           </div>
         </div>
 
@@ -107,13 +112,13 @@ export default function AuditOutput() {
           <div className="kpi-label">IC Constraint Satisfaction</div>
           <div className="formula-block" style={{ fontSize: 10 }}>CE incentive compatibility</div>
           <div style={{ margin: '12px 0' }}>
-            <span className={`status-badge ${latestRound.icSatisfied ? 'deterred' : 'active'}`}
+            <span className={`status-badge ${icSatisfied ? 'deterred' : 'active'}`}
               style={{ fontSize: 14, padding: '4px 16px' }}>
-              {latestRound.icSatisfied ? '✓ PASS' : '✗ FAIL'}
+              {icSatisfied ? '✓ PASS' : '✗ FAIL'}
             </span>
           </div>
           <div className="kpi-interpretation">
-            The mediator's audit allocation is {latestRound.icSatisfied ? '' : 'NOT '}game-theoretically valid.
+            The mediator's audit allocation is {icSatisfied ? '' : 'NOT '}game-theoretically valid.
           </div>
         </div>
 
@@ -183,46 +188,67 @@ export default function AuditOutput() {
             </thead>
             <tbody>
               {auditDecisions.map((d, i) => {
-                const t = d.transaction;
-                const delib = d.deliberation;
+                const t = d.transaction || {};
+                const delib = d.deliberation || {};
                 const isExpanded = expandedRow === i;
-                const kpi = latestRound.typeKPIs[FRAUDSTER_TYPES.findIndex(ft => ft.id === t.typeId)];
+                const riskScore = t.risk_score ?? t.riskScore ?? 0;
+                const typeId = t.type_id ?? t.typeId ?? '';
+                const typeName = t.type?.name || FRAUDSTER_TYPES.find(ft => ft.id === typeId)?.name || typeId;
+                const typeColor = t.type?.color || FRAUDSTER_TYPES.find(ft => ft.id === typeId)?.color || '#888';
+                const coalId = t.coalition_id ?? t.coalitionId;
+                const shapleyVal = t.shapley_value ?? t.shapleyValue ?? 0;
+                const isKeystone = t.is_keystone ?? t.isKeystone ?? false;
+                const leader = delib.leader || {};
+                const leaderDecision = delib.leader_decision ?? delib.leaderDecision ?? 'SKIP';
+                const consensus = delib.consensus ?? 0;
+
+                // Find type KPI
+                const typeKpis = latestRound.type_kpis || latestRound.typeKPIs;
+                let kpi = {};
+                if (typeKpis) {
+                  if (Array.isArray(typeKpis)) {
+                    const idx = FRAUDSTER_TYPES.findIndex(ft => ft.id === typeId);
+                    kpi = typeKpis[idx] || {};
+                  } else {
+                    kpi = typeKpis[typeId] || {};
+                  }
+                }
 
                 return (
                   <>
-                    <tr key={t.id} onClick={() => setExpandedRow(isExpanded ? null : i)}
+                    <tr key={t.id || i} onClick={() => setExpandedRow(isExpanded ? null : i)}
                       style={{ cursor: 'pointer' }}>
                       <td>
-                        <span className="mono" style={{ fontSize: 12, fontWeight: 500 }}>{t.id}</span>
+                        <span className="mono" style={{ fontSize: 12, fontWeight: 500 }}>{t.id || `TXN-${i}`}</span>
                       </td>
                       <td>
                         <span className="mono" style={{
                           fontSize: 13, fontWeight: 500,
-                          color: t.riskScore > 0.7 ? 'var(--positive-red)' : t.riskScore > 0.4 ? 'var(--secondary-amber)' : 'var(--negative-green)',
+                          color: riskScore > 0.7 ? 'var(--positive-red)' : riskScore > 0.4 ? 'var(--secondary-amber)' : 'var(--negative-green)',
                         }}>
-                          {t.riskScore.toFixed(3)}
+                          {riskScore.toFixed(3)}
                         </span>
                       </td>
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <div style={{ width: 6, height: 6, borderRadius: 2, background: t.type.color }} />
-                          <span style={{ fontSize: 12 }}>{t.type.name}</span>
+                          <div style={{ width: 6, height: 6, borderRadius: 2, background: typeColor }} />
+                          <span style={{ fontSize: 12 }}>{typeName}</span>
                         </div>
                       </td>
                       <td>
-                        <span className={`regime-badge ${kpi.regime}`}>
+                        <span className={`regime-badge ${kpi.regime || 'none'}`}>
                           {kpi.regime === 'full' ? 'Full' : kpi.regime === 'partial' ? 'Partial' : 'None'}
                         </span>
                       </td>
                       <td>
-                        {t.isKeystone ? (
+                        {isKeystone ? (
                           <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--secondary-amber)' }}>
                             <Star size={12} fill="var(--secondary-amber)" />
                             <span className="mono" style={{ fontSize: 11 }}>Keystone</span>
                           </span>
-                        ) : t.coalitionId ? (
+                        ) : coalId ? (
                           <span className="mono" style={{ fontSize: 11, color: 'var(--coalition-purple)' }}>
-                            φ={t.shapleyValue.toFixed(2)}
+                            φ={shapleyVal.toFixed(2)}
                           </span>
                         ) : (
                           <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>—</span>
@@ -230,14 +256,14 @@ export default function AuditOutput() {
                       </td>
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <span style={{ fontSize: 14 }}>{delib.leader.icon}</span>
-                          <span style={{ fontSize: 12 }}>{delib.leader.name}</span>
+                          <span style={{ fontSize: 14 }}>{leader.icon || '❓'}</span>
+                          <span style={{ fontSize: 12 }}>{leader.name || leader.id || 'Unknown'}</span>
                         </div>
                       </td>
                       <td>
                         <span style={{ fontSize: 11, color: 'var(--text-secondary)', maxWidth: 200, display: 'block' }}>
-                          {delib.leaderDecision === 'AUDIT'
-                            ? `E[cheat]>0, ρ=${t.riskScore.toFixed(2)} — rational fraud detected`
+                          {leaderDecision === 'AUDIT'
+                            ? `E[cheat]>0, ρ=${riskScore.toFixed(2)} — rational fraud detected`
                             : 'Borderline — included by risk ranking'}
                         </span>
                       </td>
@@ -255,11 +281,11 @@ export default function AuditOutput() {
                             <div className="sar-row">
                               <div className="sar-label">Deterrence Regime</div>
                               <div className="sar-value">
-                                <span className={`regime-badge ${kpi.regime}`}>
-                                  {kpi.regime.toUpperCase()}
+                                <span className={`regime-badge ${kpi.regime || 'none'}`}>
+                                  {(kpi.regime || 'none').toUpperCase()}
                                 </span>
                                 <span className="mono" style={{ marginLeft: 8, fontSize: 12 }}>
-                                  q* = {(kpi.qStar * 100).toFixed(1)}% · E[cheat] = ₹{Math.round(kpi.eCheat).toLocaleString()} · margin = {kpi.margin.toFixed(3)}
+                                  q* = {((kpi.q_star ?? kpi.qStar ?? 0) * 100).toFixed(1)}% · E[cheat] = ₹{Math.round(kpi.e_cheat ?? kpi.eCheat ?? 0).toLocaleString()} · margin = {(kpi.margin ?? 0).toFixed(3)}
                                 </span>
                               </div>
                             </div>
@@ -267,38 +293,37 @@ export default function AuditOutput() {
                               <div className="sar-label">Fraudster Type</div>
                               <div className="sar-value">
                                 <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                  <div style={{ width: 8, height: 8, borderRadius: 2, background: t.type.color }} />
-                                  {t.type.name} (utility multiplier: {t.type.utilityMultiplier})
+                                  <div style={{ width: 8, height: 8, borderRadius: 2, background: typeColor }} />
+                                  {typeName}
                                 </span>
-                                <div className="plain-english" style={{ marginTop: 2 }}>{t.type.description}</div>
                               </div>
                             </div>
                             <div className="sar-row">
                               <div className="sar-label">Council Leader</div>
                               <div className="sar-value">
-                                {delib.leader.icon} {delib.leader.name} — confidence {(delib.leaderScore * 100).toFixed(0)}%
+                                {leader.icon || '❓'} {leader.name || leader.id || 'Unknown'} — confidence {((delib.leader_score ?? delib.leaderScore ?? 0) * 100).toFixed(0)}%
                               </div>
                             </div>
-                            {delib.dissenters.length > 0 && (
+                            {(delib.dissenters?.length > 0) && (
                               <div className="sar-row">
                                 <div className="sar-label">Dissenting Agents</div>
                                 <div className="sar-value">
                                   {delib.dissenters.map(d => (
                                     <span key={d.id} style={{ marginRight: 8 }}>
-                                      {d.icon} {d.name}
+                                      {d.icon || '❓'} {d.name || d.id}
                                     </span>
                                   ))}
                                 </div>
                               </div>
                             )}
-                            {t.coalitionId && (
+                            {coalId && (
                               <div className="sar-row">
                                 <div className="sar-label">Coalition Position</div>
                                 <div className="sar-value">
-                                  Coalition {t.coalitionId} · φᵢ = {t.shapleyValue.toFixed(2)}
-                                  {t.isKeystone && (
+                                  Coalition {coalId} · φᵢ = {shapleyVal.toFixed(2)}
+                                  {isKeystone && (
                                     <span style={{ color: 'var(--secondary-amber)', marginLeft: 8, fontWeight: 600 }}>
-                                      ⭐ KEYSTONE — auditing collapses {(t.shapleyValue * 100).toFixed(0)}% of coalition gain
+                                      ⭐ KEYSTONE — auditing collapses {(shapleyVal * 100).toFixed(0)}% of coalition gain
                                     </span>
                                   )}
                                 </div>
@@ -307,8 +332,8 @@ export default function AuditOutput() {
                             <div className="sar-row">
                               <div className="sar-label">IC Constraint</div>
                               <div className="sar-value">
-                                <span className={`status-badge ${latestRound.icSatisfied ? 'deterred' : 'active'}`}>
-                                  {latestRound.icSatisfied ? '✓ SATISFIED' : '✗ VIOLATED'}
+                                <span className={`status-badge ${icSatisfied ? 'deterred' : 'active'}`}>
+                                  {icSatisfied ? '✓ SATISFIED' : '✗ VIOLATED'}
                                 </span>
                               </div>
                             </div>

@@ -1,11 +1,12 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { useSim } from '../store/SimContext';
-import { AGENTS } from '../engine/simulation';
+import { useSim, AGENTS } from '../store/SimContext';
+import { useSSE } from '../hooks/useSSE';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
 } from 'recharts';
+import { Radio, Loader2 } from 'lucide-react';
 
 const fadeUp = {
   hidden: { opacity: 0, y: 16 },
@@ -14,10 +15,20 @@ const fadeUp = {
 
 export default function CouncilChamber() {
   const { state } = useSim();
-  const { roundHistory, agentPriors } = state;
+  const { roundHistory, agentPriors, simulationId, currentRound } = state;
   const hasData = roundHistory.length > 0;
   const latestRound = hasData ? roundHistory[roundHistory.length - 1] : null;
-  const latestDeliberations = latestRound ? latestRound.auditDecisions : [];
+  const latestDecisions = latestRound?.audit_decisions || latestRound?.auditDecisions || [];
+  const [showStream, setShowStream] = useState(false);
+
+  // SSE streaming hook
+  const sse = useSSE();
+
+  const handleStream = () => {
+    if (!simulationId || !currentRound) return;
+    setShowStream(true);
+    sse.startStream(simulationId, currentRound);
+  };
 
   // Agent accuracy data
   const agentAccuracyData = useMemo(() =>
@@ -29,19 +40,21 @@ export default function CouncilChamber() {
         accuracy: Math.round(accuracy * 100),
         alpha: prior.alpha,
         beta: prior.beta,
-        led: prior.led,
+        led: prior.led || prior.rounds_led || 0,
       };
     }).sort((a, b) => b.accuracy - a.accuracy),
     [agentPriors]
   );
 
-  // Leadership frequency
+  // Leadership frequency — handle both backend and frontend data shapes
   const leadershipData = useMemo(() => {
     const counts = {};
     AGENTS.forEach(a => { counts[a.id] = 0; });
     roundHistory.forEach(r => {
-      r.auditDecisions.forEach(d => {
-        counts[d.deliberation.leader.id] = (counts[d.deliberation.leader.id] || 0) + 1;
+      const decisions = r.audit_decisions || r.auditDecisions || [];
+      decisions.forEach(d => {
+        const leaderId = d.leader_id || d.leaderId || d.deliberation?.leader?.id || d.deliberation?.leader_id || '';
+        if (leaderId) counts[leaderId] = (counts[leaderId] || 0) + 1;
       });
     });
     const total = Object.values(counts).reduce((a, b) => a + b, 0) || 1;
@@ -54,7 +67,12 @@ export default function CouncilChamber() {
   }, [roundHistory]);
 
   // Pick one deliberation to showcase
-  const showcaseDelib = latestDeliberations.length > 0 ? latestDeliberations[0] : null;
+  const showcaseDecision = latestDecisions.length > 0 ? latestDecisions[0] : null;
+  const showcaseLeader = showcaseDecision
+    ? AGENTS.find(a => a.id === showcaseDecision.leader_id || a.id === showcaseDecision.leaderId) || AGENTS[0]
+    : null;
+  const agreeing = showcaseDecision?.agreeing ?? 0;
+  const dissentersCount = Math.max(0, AGENTS.length - agreeing);
 
   if (!hasData) {
     return (
@@ -71,7 +89,64 @@ export default function CouncilChamber() {
         <span className="section-label">Page 3 of 5</span>
         <h1>Council Chamber</h1>
         <p>The deliberative multi-agent council in action. Five specialised agents debate each audit decision.</p>
+        {simulationId && currentRound > 0 && (
+          <button className="btn btn-primary" onClick={handleStream} disabled={sse.isStreaming}
+            style={{ marginTop: 12 }}>
+            {sse.isStreaming ? <><Loader2 size={14} className="animate-spin" /> Streaming...</> : <><Radio size={14} /> Stream Live Council</>}
+          </button>
+        )}
       </motion.div>
+
+      {/* SSE Live Stream Panel */}
+      {showStream && (
+        <motion.div className="card" initial="hidden" animate="visible" custom={0.5} variants={fadeUp}
+          style={{ marginBottom: 24, background: 'var(--bg-formula)', border: '1px solid var(--accent-teal)', borderColor: 'oklch(0.78 0.12 165 / 0.3)' }}>
+          <div className="section-label" style={{ marginBottom: 12, color: 'var(--accent-teal)' }}>
+            {sse.isStreaming ? '● Live Council Stream' : '◉ Stream Complete'}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {AGENTS.map(agent => {
+              const agentTokens = sse.tokens[agent.id] || '';
+              const agentResult = sse.agentResults.find(r => r.agent_id === agent.id);
+              return (
+                <div key={agent.id} style={{
+                  padding: '10px 14px', background: 'var(--bg-inset)',
+                  borderRadius: 'var(--radius-md)', borderLeft: `3px solid ${agent.color}`,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <span style={{ fontSize: 16 }}>{agent.icon}</span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: agent.color }}>{agent.name}</span>
+                    {agentResult && (
+                      <span className={`chat-tag ${agentResult.position?.toLowerCase()}`}>
+                        {agentResult.position}
+                      </span>
+                    )}
+                    {agentResult && (
+                      <span className="mono" style={{ fontSize: 10, color: 'var(--text-tertiary)', marginLeft: 'auto' }}>
+                        {agentResult.stub_used ? '⚡ stub' : '🤖 NIM'}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{
+                    fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-secondary)',
+                    lineHeight: 1.6, minHeight: 20,
+                  }}>
+                    {agentTokens || (sse.isStreaming ? <span style={{ opacity: 0.4 }}>Waiting...</span> : '')}
+                    {sse.isStreaming && !agentResult && agentTokens && (
+                      <span className="cursor-blink" style={{ borderRight: '2px solid var(--accent-teal)', paddingRight: 1 }} />
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {sse.leader && (
+            <div style={{ marginTop: 12, padding: '8px 12px', background: 'oklch(0.96 0.03 165)', borderRadius: 'var(--radius-md)', fontSize: 12 }}>
+              <strong>Leader:</strong> {sse.leader.leader_name} · <strong>Decision:</strong> {sse.finalDecision?.decision || 'pending'} · Consensus: {(sse.finalDecision?.consensus_score * 100 || 0).toFixed(0)}%
+            </div>
+          )}
+        </motion.div>
+      )}
 
       {/* Top Bar — Leader + Consensus */}
       <motion.div initial="hidden" animate="visible" custom={1} variants={fadeUp}
@@ -83,23 +158,23 @@ export default function CouncilChamber() {
           <div className="formula-block" style={{ fontSize: 11, marginBottom: 8 }}>
             Leader = argmax_i [spec_i · feat_vec(t)] · accuracy_i
           </div>
-          {showcaseDelib && (
+          {showcaseDecision && showcaseLeader && (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
                 <div style={{
                   width: 40, height: 40, borderRadius: 'var(--radius-md)',
-                  background: showcaseDelib.deliberation.leader.color,
+                  background: showcaseLeader.color,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: 20,
                 }}>
-                  {showcaseDelib.deliberation.leader.icon}
+                  {showcaseLeader.icon}
                 </div>
                 <div>
                   <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600 }}>
-                    {showcaseDelib.deliberation.leader.name}
+                    {showcaseLeader.name}
                   </div>
                   <div className="mono" style={{ fontSize: 12, color: 'var(--accent-teal)' }}>
-                    Confidence: {(showcaseDelib.deliberation.leaderScore * 100).toFixed(0)}%
+                    Confidence: {((showcaseDecision.leader_score ?? showcaseDecision.leaderScore ?? 0) * 100).toFixed(0)}%
                   </div>
                 </div>
               </div>
@@ -108,10 +183,10 @@ export default function CouncilChamber() {
                 padding: '6px 10px', background: 'var(--bg-inset)',
                 borderRadius: 'var(--radius-sm)', fontFamily: 'var(--font-mono)',
               }}>
-                Dominant feature: {showcaseDelib.deliberation.dominantFeature}
+                Dominant feature: {showcaseDecision.dominant_feature || showcaseDecision.dominantFeature || 'unknown'}
               </div>
               <div className="plain-english">
-                {showcaseDelib.deliberation.leader.name} is leading this round — {showcaseDelib.deliberation.dominantFeature} dominated the transaction features.
+                {showcaseLeader.name} is leading this round — {showcaseDecision.dominant_feature || showcaseDecision.dominantFeature || 'the transaction features'} dominated the transaction features.
               </div>
             </>
           )}
@@ -123,11 +198,11 @@ export default function CouncilChamber() {
           <div className="formula-block" style={{ fontSize: 11, marginBottom: 8 }}>
             consensus = agents agreeing with leader / 5
           </div>
-          {showcaseDelib && (
+          {showcaseDecision && (
             <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
                 {AGENTS.map((agent, i) => {
-                  const agreed = !showcaseDelib.deliberation.dissenters.find(d => d.id === agent.id);
+                  const agreed = i < agreeing;
                   return (
                     <div key={agent.id} title={agent.name} style={{
                       width: 28, height: 28, borderRadius: '50%',
@@ -142,16 +217,16 @@ export default function CouncilChamber() {
                   );
                 })}
                 <span className="mono" style={{ fontSize: 18, fontWeight: 500, marginLeft: 8 }}>
-                  {showcaseDelib.deliberation.agreeing}/5
+                  {agreeing}/5
                 </span>
-                <span className={`regime-badge ${showcaseDelib.deliberation.consensus >= 0.6 ? 'full' : 'partial'}`}>
-                  {showcaseDelib.deliberation.consensus >= 0.8 ? 'Strong' : showcaseDelib.deliberation.consensus >= 0.6 ? 'Moderate' : 'Low'}
+                <span className={`regime-badge ${(showcaseDecision.consensus ?? 0) >= 0.6 ? 'full' : 'partial'}`}>
+                  {(showcaseDecision.consensus ?? 0) >= 0.8 ? 'Strong' : (showcaseDecision.consensus ?? 0) >= 0.6 ? 'Moderate' : 'Low'}
                 </span>
               </div>
               <div className="plain-english">
-                {showcaseDelib.deliberation.agreeing} of 5 agents agreed.
-                {showcaseDelib.deliberation.dissenters.length > 0
-                  ? ` ${showcaseDelib.deliberation.dissenters.length} dissented — treat this as a ${showcaseDelib.deliberation.consensus < 0.6 ? 'contested' : 'confident'} decision.`
+                {agreeing} of 5 agents agreed.
+                {dissentersCount > 0
+                  ? ` ${dissentersCount} dissented — treat this as a ${(showcaseDecision.consensus ?? 0) < 0.6 ? 'contested' : 'confident'} decision.`
                   : ' Unanimous consensus.'}
               </div>
             </>
@@ -164,7 +239,7 @@ export default function CouncilChamber() {
         style={{ marginBottom: 24, maxHeight: 500, overflow: 'auto' }}>
         <div className="section-label" style={{ marginBottom: 16 }}>Debate Log — Latest Round</div>
 
-        {latestDeliberations.slice(0, 5).map((delib, dIdx) => (
+        {latestDecisions.slice(0, 5).map((decision, dIdx) => (
           <div key={dIdx} style={{
             marginBottom: 24,
             paddingBottom: 24,
@@ -178,74 +253,32 @@ export default function CouncilChamber() {
               display: 'flex',
               alignItems: 'center',
               gap: 8,
+              flexWrap: 'wrap',
             }}>
-              Transaction {delib.transaction.id}
+              Transaction {decision.transaction_id || decision.id}
               <span className="symbol-pill" style={{ fontSize: 10 }}>
-                ρ = {delib.transaction.riskScore.toFixed(3)}
+                ρ = {(decision.risk_score ?? decision.riskScore ?? 0).toFixed(3)}
               </span>
-              <span className={`chat-tag ${delib.deliberation.leaderDecision.toLowerCase()}`}>
-                {delib.deliberation.leaderDecision}
+              <span className={`chat-tag ${(decision.leader_decision || decision.leaderDecision || 'SKIP').toLowerCase()}`}>
+                {decision.leader_decision || decision.leaderDecision || 'SKIP'}
               </span>
             </div>
 
-            {/* Round 1 positions */}
             <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 6, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-              Round 1 — Initial Positions
+              Council Summary
             </div>
-            {delib.deliberation.round1.map((pos, i) => (
-              <div className="chat-message" key={`r1-${i}`}>
-                <div className="chat-avatar" style={{ background: `${pos.agent.color}18` }}>
-                  {pos.agent.icon}
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: pos.agent.color }}>{pos.agent.name}</span>
-                    <span className={`chat-tag ${pos.position.toLowerCase()}`}>{pos.position}</span>
-                  </div>
-                  <div className="chat-bubble">{pos.reasoning}</div>
-                </div>
-              </div>
-            ))}
-
-            {/* Round 2 — changes */}
-            {delib.deliberation.round2.some(p => p.changed) && (
-              <>
-                <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 12, marginBottom: 6, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-                  Round 2 — Deliberation
-                </div>
-                {delib.deliberation.round2.filter(p => p.changed).map((pos, i) => (
-                  <div className="chat-message" key={`r2-${i}`}>
-                    <div className="chat-avatar" style={{ background: `${pos.agent.color}18` }}>
-                      {pos.agent.icon}
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: pos.agent.color }}>{pos.agent.name}</span>
-                        <span className={`chat-tag ${pos.position.toLowerCase()}`}>{pos.position}</span>
-                        <span style={{ fontSize: 10, color: 'var(--secondary-amber)' }}>↻ Changed position</span>
-                      </div>
-                      <div className="chat-bubble">{pos.reasoning}</div>
-                    </div>
-                  </div>
-                ))}
-              </>
-            )}
-
-            {/* Final decision */}
             <div style={{
               marginTop: 12, padding: '8px 12px',
-              background: delib.deliberation.leaderDecision === 'AUDIT' ? 'oklch(0.96 0.03 165)' : 'var(--bg-inset)',
+              background: (decision.leader_decision || decision.leaderDecision) === 'AUDIT' ? 'oklch(0.96 0.03 165)' : 'var(--bg-inset)',
               borderRadius: 'var(--radius-md)',
-              border: `1px solid ${delib.deliberation.leaderDecision === 'AUDIT' ? 'oklch(0.88 0.08 165)' : 'var(--border-secondary)'}`,
+              border: `1px solid ${(decision.leader_decision || decision.leaderDecision) === 'AUDIT' ? 'oklch(0.88 0.08 165)' : 'var(--border-secondary)'}`,
               fontSize: 12,
             }}>
-              <strong>{delib.deliberation.leader.icon} {delib.deliberation.leader.name} (Leader):</strong>{' '}
-              Decision = <strong>{delib.deliberation.leaderDecision}</strong>.{' '}
-              {delib.deliberation.dissenters.length > 0 && (
-                <span style={{ color: 'var(--text-secondary)' }}>
-                  Dissenters: {delib.deliberation.dissenters.map(d => d.name).join(', ')}
-                </span>
-              )}
+              <strong>{showcaseLeader?.icon} {showcaseLeader?.name} (Leader):</strong>{' '}
+              Decision = <strong>{decision.leader_decision || decision.leaderDecision}</strong>.{' '}
+              <span style={{ color: 'var(--text-secondary)' }}>
+                Consensus: {decision.agreeing ?? agreeing}/5 · Dissenters: {dissentersCount}
+              </span>
             </div>
           </div>
         ))}

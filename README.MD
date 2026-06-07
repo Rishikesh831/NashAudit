@@ -54,6 +54,7 @@ This is the final "Command Manual" for your AI-fied setup. I've designed this **
 ### 🖥️ Backend & API Standards
 * **Contract First:** Always define the API response in `DOCS/API.md` before writing code.
 * **Architecture Docs:** See `DOCS/PHASE_1_2_DOCS.md` for a complete breakdown of the Skeleton API and Game Theory Engine implementation.
+* **Integration Status:** See `DOCS/MOCK_VS_REAL_STATUS.md` for the current state of Mock vs. Real integrations (Frontend, ML, LLM).
 * **Validation:** Use the **`backend-core`** skill to ensure every endpoint has 400/500 error handling.
 * **Database:** Use **PlanetScale** migrations; never allow the agent to run raw SQL without a "Dry Run."
 
