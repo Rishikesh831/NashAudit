@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useSim, FRAUDSTER_TYPES } from '../store/SimContext';
 import { setupPreview } from '../api/api';
-import { ArrowRight, Upload, Shuffle, Loader2 } from 'lucide-react';
+import { ArrowRight, Upload, Shuffle, Loader2, Copy, Check } from 'lucide-react';
 
 const fadeUp = {
   hidden: { opacity: 0, y: 16 },
@@ -17,13 +17,37 @@ function formatCurrency(val) {
 }
 
 export default function SimulationSetup() {
-  const { state, setParam, setTypeMix, setDataMode, initSimulation } = useSim();
+  const { state, setParam, setTypeMix, setDataMode, initSimulation, loadSimulation } = useSim();
   const navigate = useNavigate();
   const p = state.params;
   const q = p.k / p.N;
   const [previewData, setPreviewData] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [loadSimId, setLoadSimId] = useState('');
+  const [loadingExisting, setLoadingExisting] = useState(false);
+  const [copiedId, setCopiedId] = useState(null);
   const debounceRef = useRef(null);
+
+  // Handle loading existing simulation
+  const handleLoadSimulation = async (simId) => {
+    setLoadingExisting(true);
+    try {
+      await loadSimulation(simId);
+      navigate('/visualiser');
+    } catch (err) {
+      console.error('Failed to load simulation:', err);
+      alert(`Failed to load simulation: ${err.message}`);
+    } finally {
+      setLoadingExisting(false);
+    }
+  };
+
+  // Copy to clipboard
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(text);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
 
   // Fetch preview from backend API (debounced)
   useEffect(() => {
@@ -83,7 +107,128 @@ export default function SimulationSetup() {
         <p>Configure the Bayesian Stackelberg game parameters. The live deterrence preview below updates as you change any slider.</p>
       </motion.div>
 
-      {/* Section A — Transaction Batch */}
+      {/* Load Existing Simulation */}
+      <motion.div initial="hidden" animate="visible" custom={0.5} variants={fadeUp}>
+        <div className="section-label" style={{ marginBottom: 12 }}>Quick Load — Recent Scenarios</div>
+        <div className="card" style={{ marginBottom: 24, background: 'var(--bg-inset)' }}>
+          <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 12 }}>
+            Paste a simulation ID below or click one of the preset scenarios:
+          </div>
+          
+          {/* Quick load buttons for demo scenarios */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 16 }}>
+            {[
+              { id: '1a9ecc39', label: '🔴 Low-Audit', desc: '12% audit (q=0.12)' },
+              { id: '4b66e21c', label: '🟡 Standard', desc: '20% audit (q=0.20)' },
+              { id: 'dcd85bbf', label: '🟢 High-Audit', desc: '30% audit (q=0.30)' },
+            ].map(({ id, label, desc }) => (
+              <button
+                key={id}
+                disabled={loadingExisting}
+                onClick={() => handleLoadSimulation(id)}
+                style={{
+                  padding: '10px 12px',
+                  border: '1px solid var(--border-primary)',
+                  borderRadius: 6,
+                  background: 'var(--bg-primary)',
+                  cursor: loadingExisting ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'flex-start',
+                  gap: 4,
+                  fontSize: 12,
+                  color: 'var(--text-primary)',
+                  opacity: loadingExisting ? 0.5 : 1,
+                  transition: 'all 0.2s',
+                }}
+                onMouseEnter={(e) => {
+                  if (!loadingExisting) e.currentTarget.style.background = 'var(--bg-hover)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'var(--bg-primary)';
+                }}
+              >
+                <div style={{ fontWeight: 500 }}>{label}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>{desc}</div>
+              </button>
+            ))}
+          </div>
+
+          {/* Manual ID input */}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              type="text"
+              placeholder="Paste simulation ID here..."
+              value={loadSimId}
+              onChange={(e) => setLoadSimId(e.target.value)}
+              onKeyPress={(e) => {
+                if (e.key === 'Enter' && loadSimId.trim()) {
+                  handleLoadSimulation(loadSimId.trim());
+                }
+              }}
+              style={{
+                flex: 1,
+                padding: '10px 12px',
+                border: '1px solid var(--border-primary)',
+                borderRadius: 4,
+                background: 'var(--bg-primary)',
+                fontSize: 12,
+                fontFamily: 'var(--font-mono)',
+                color: 'var(--text-primary)',
+              }}
+              disabled={loadingExisting}
+            />
+            <button
+              disabled={!loadSimId.trim() || loadingExisting}
+              onClick={() => handleLoadSimulation(loadSimId.trim())}
+              style={{
+                padding: '10px 16px',
+                border: '1px solid var(--accent-teal)',
+                borderRadius: 4,
+                background: 'var(--accent-teal)',
+                color: 'white',
+                fontSize: 12,
+                fontWeight: 500,
+                cursor: !loadSimId.trim() || loadingExisting ? 'not-allowed' : 'pointer',
+                opacity: !loadSimId.trim() || loadingExisting ? 0.5 : 1,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              {loadingExisting ? (
+                <>
+                  <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                  Loading...
+                </>
+              ) : (
+                <>
+                  <ArrowRight size={14} />
+                  Load
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* OR divider */}
+      <motion.div
+        initial="hidden" animate="visible" custom={0.7} variants={fadeUp}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          margin: '16px 0 24px',
+          color: 'var(--text-tertiary)',
+          fontSize: 12,
+          fontWeight: 500,
+        }}
+      >
+        <div style={{ flex: 1, height: 1, background: 'var(--border-primary)' }} />
+        <span>OR CREATE NEW</span>
+        <div style={{ flex: 1, height: 1, background: 'var(--border-primary)' }} />
+      </motion.div>
       <motion.div initial="hidden" animate="visible" custom={1} variants={fadeUp}>
         <div className="section-label" style={{ marginBottom: 12 }}>Section A — Transaction Batch</div>
         <div className="card" style={{ marginBottom: 24 }}>

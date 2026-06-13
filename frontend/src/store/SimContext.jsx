@@ -192,6 +192,30 @@ export function SimProvider({ children }) {
     dispatch({ type: 'SET_SPEED', value });
   }, []);
 
+  // ─── Load existing simulation by ID ───
+  const loadSimulation = useCallback(async (simulationId) => {
+    dispatch({ type: 'SET_LOADING', value: true });
+    try {
+      const result = await getSimulationState(simulationId);
+      dispatch({
+        type: 'SET_SIMULATION',
+        simulationId,
+        transactions: result.transactions || [],
+        agentPriors: result.agent_priors || {},
+      });
+      // Set roundHistory from result
+      if (result.round_history) {
+        result.round_history.forEach((roundData) => {
+          dispatch({ type: 'ADD_ROUND', roundData });
+        });
+      }
+      return result;
+    } catch (err) {
+      dispatch({ type: 'SET_ERROR', value: err.message || 'Failed to load simulation' });
+      throw err;
+    }
+  }, []);
+
   // ─── Preview via backend API (debounced by caller) ───
   const fetchPreview = useCallback(async (params) => {
     try {
@@ -211,6 +235,7 @@ export function SimProvider({ children }) {
     setTypeMix,
     setDataMode,
     initSimulation,
+    loadSimulation,
     runOneRound,
     startSimulation,
     stopSimulation,
